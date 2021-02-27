@@ -390,6 +390,7 @@ class Registry:
 
     @classmethod
     def get_scheduler_class(cls, name):
+        print(cls.mapping["scheduler_name_mapping"])
         return cls.mapping["scheduler_name_mapping"].get(name, None)
 
     @classmethod
