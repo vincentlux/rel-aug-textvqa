@@ -204,7 +204,7 @@ def build_processors(
     from src.datasets.processors.processors import Processor
 
     processor_dict = {}
-
+    print(processors_config)
     for processor_key, processor_params in processors_config.items():
         if not processor_params:
             continue
