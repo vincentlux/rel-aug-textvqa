@@ -10,17 +10,10 @@ import warnings
 import torch
 from torch import distributed as dist
 
+
 MAX_SIZE_LIMIT = 65533
 BYTE_SIZE = 256
 logger = logging.getLogger(__name__)
-
-
-def is_master():
-    return get_rank() == 0
-
-
-def is_dist_initialized():
-    return dist.is_available() and dist.is_initialized()
 
 
 def synchronize():
@@ -37,6 +30,140 @@ def synchronize():
         return
 
     dist.barrier()
+
+
+def get_rank():
+    if not dist.is_available():
+        return 0
+    if not dist.is_nccl_available():
+        return 0
+    if not dist.is_initialized():
+        return 0
+    return dist.get_rank()
+
+
+def is_master():
+    return get_rank() == 0
+
+
+def is_dist_initialized():
+    return dist.is_available() and dist.is_initialized()
+
+
+def get_world_size():
+    if not dist.is_available():
+        return 1
+    if not dist.is_nccl_available():
+        return 1
+    if not dist.is_initialized():
+        return 1
+    return dist.get_world_size()
+
+
+def broadcast_tensor(tensor, src=0):
+    world_size = get_world_size()
+    if world_size < 2:
+        return tensor
+
+    with torch.no_grad():
+        dist.broadcast(tensor, src=0)
+
+    return tensor
+
+
+def broadcast_scalar(scalar, src=0, device="cpu"):
+    if get_world_size() < 2:
+        return scalar
+    scalar_tensor = torch.tensor(scalar).long().to(device)
+    scalar_tensor = broadcast_tensor(scalar_tensor, src)
+    return scalar_tensor.item()
+
+
+def reduce_tensor(tensor):
+    world_size = get_world_size()
+
+    if world_size < 2:
+        return tensor
+
+    with torch.no_grad():
+        dist.reduce(tensor, dst=0)
+        if dist.get_rank() == 0:
+            tensor = tensor.div(world_size)
+
+    return tensor
+
+
+def gather_tensor(tensor):
+    world_size = get_world_size()
+
+    if world_size < 2:
+        return tensor
+
+    with torch.no_grad():
+        tensor_list = []
+
+        for _ in range(world_size):
+            tensor_list.append(torch.zeros_like(tensor))
+
+        dist.all_gather(tensor_list, tensor)
+        tensor_list = torch.stack(tensor_list, dim=0)
+    return tensor_list
+
+
+def reduce_dict(dictionary):
+    world_size = get_world_size()
+    if world_size < 2:
+        return dictionary
+
+    with torch.no_grad():
+        if len(dictionary) == 0:
+            return dictionary
+
+        keys, values = zip(*sorted(dictionary.items()))
+        values = torch.stack(values, dim=0)
+
+        dist.reduce(values, dst=0)
+
+        if dist.get_rank() == 0:
+            # only main process gets accumulated, so only divide by
+            # world_size in this case
+            values /= world_size
+        reduced_dict = {k: v for k, v in zip(keys, values)}
+    return reduced_dict
+
+
+# Object byte tensor utilities have been adopted from
+# https://github.com/pytorch/fairseq/blob/master/fairseq/distributed_utils.py
+def object_to_byte_tensor(obj, max_size=4094):
+    """
+    Encode Python objects to PyTorch byte tensors
+    """
+    assert max_size <= MAX_SIZE_LIMIT
+    byte_tensor = torch.zeros(max_size, dtype=torch.uint8)
+
+    obj_enc = pickle.dumps(obj)
+    obj_size = len(obj_enc)
+    if obj_size > max_size:
+        raise Exception(
+            f"objects too large: object size {obj_size}, max size {max_size}"
+        )
+
+    byte_tensor[0] = obj_size // 256
+    byte_tensor[1] = obj_size % 256
+    byte_tensor[2 : 2 + obj_size] = torch.ByteTensor(list(obj_enc))
+    return byte_tensor
+
+
+def byte_tensor_to_object(byte_tensor, max_size=4094):
+    """
+    Decode PyTorch byte tensors to Python objects
+    """
+    assert max_size <= MAX_SIZE_LIMIT
+
+    obj_size = byte_tensor[0].item() * 256 + byte_tensor[1].item()
+    obj_enc = bytes(byte_tensor[2 : 2 + obj_size].tolist())
+    obj = pickle.loads(obj_enc)
+    return obj
 
 
 def infer_init_method(config):
@@ -122,118 +249,6 @@ def distributed_init(config):
     return config.distributed.rank
 
 
-def get_world_size():
-    if not dist.is_available():
-        return 1
-    if not dist.is_nccl_available():
-        return 1
-    if not dist.is_initialized():
-        return 1
-    return dist.get_world_size()
-
-
-def broadcast_tensor(tensor, src=0):
-    world_size = get_world_size()
-    if world_size < 2:
-        return tensor
-
-    with torch.no_grad():
-        dist.broadcast(tensor, src=0)
-
-    return tensor
-
-
-def broadcast_scalar(scalar, src=0, device="cpu"):
-    if get_world_size() < 2:
-        return scalar
-    scalar_tensor = torch.tensor(scalar).long().to(device)
-    scalar_tensor = broadcast_tensor(scalar_tensor, src)
-    return scalar_tensor.item()
-
-
-def gather_tensor(tensor):
-    world_size = get_world_size()
-
-    if world_size < 2:
-        return tensor
-
-    with torch.no_grad():
-        tensor_list = []
-
-        for _ in range(world_size):
-            tensor_list.append(torch.zeros_like(tensor))
-
-        dist.all_gather(tensor_list, tensor)
-        tensor_list = torch.stack(tensor_list, dim=0)
-    return tensor_list
-
-
-# Object byte tensor utilities have been adopted from
-# https://github.com/pytorch/fairseq/blob/master/fairseq/distributed_utils.py
-def object_to_byte_tensor(obj, max_size=4094):
-    """
-    Encode Python objects to PyTorch byte tensors
-    """
-    assert max_size <= MAX_SIZE_LIMIT
-    byte_tensor = torch.zeros(max_size, dtype=torch.uint8)
-
-    obj_enc = pickle.dumps(obj)
-    obj_size = len(obj_enc)
-    if obj_size > max_size:
-        raise Exception(
-            f"objects too large: object size {obj_size}, max size {max_size}"
-        )
-
-    byte_tensor[0] = obj_size // 256
-    byte_tensor[1] = obj_size % 256
-    byte_tensor[2: 2 + obj_size] = torch.ByteTensor(list(obj_enc))
-    return byte_tensor
-
-
-def byte_tensor_to_object(byte_tensor, max_size=4094):
-    """
-    Decode PyTorch byte tensors to Python objects
-    """
-    assert max_size <= MAX_SIZE_LIMIT
-
-    obj_size = byte_tensor[0].item() * 256 + byte_tensor[1].item()
-    obj_enc = bytes(byte_tensor[2 : 2 + obj_size].tolist())
-    obj = pickle.loads(obj_enc)
-    return obj
-
-
-def reduce_dict(dictionary):
-    world_size = get_world_size()
-    if world_size < 2:
-        return dictionary
-
-    with torch.no_grad():
-        if len(dictionary) == 0:
-            return dictionary
-
-        keys, values = zip(*sorted(dictionary.items()))
-        values = torch.stack(values, dim=0)
-
-        dist.reduce(values, dst=0)
-
-        if dist.get_rank() == 0:
-            # only main process gets accumulated, so only divide by
-            # world_size in this case
-            values /= world_size
-        reduced_dict = {k: v for k, v in zip(keys, values)}
-    return reduced_dict
-
-
-def get_rank():
-    if not dist.is_available():
-        return 0
-    if not dist.is_nccl_available():
-        return 0
-    if not dist.is_initialized():
-        return 0
-    return dist.get_rank()
-
-
 def suppress_output(is_master):
     """Suppress printing on the current device. Force printing with `force=True`."""
     import builtins as __builtin__
@@ -259,4 +274,3 @@ def suppress_output(is_master):
     # Log warnings only once
     warnings.warn = warn
     warnings.simplefilter("once", UserWarning)
-
