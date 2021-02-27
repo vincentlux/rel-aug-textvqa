@@ -166,6 +166,24 @@ class BaseProcessor:
         return item
 
 
+@registry.register_processor("simple_word")
+class SimpleWordProcessor(BaseProcessor):
+    """Tokenizes a word and processes it.
+
+    Attributes:
+        tokenizer (function): Type of tokenizer to be used.
+
+    """
+
+    def __init__(self, *args, **kwargs):
+        from src.utils.text import word_tokenize
+
+        self.tokenizer = word_tokenize
+
+    def __call__(self, item, *args, **kwargs):
+        return {"text": self.tokenizer(item["text"], *args, **kwargs)}
+
+
 @registry.register_processor("m4c_answer")
 class M4CAnswerProcessor(BaseProcessor):
     """
