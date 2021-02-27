@@ -325,7 +325,9 @@ def build_scheduler(optimizer, config):
     if not hasattr(scheduler_config, "params"):
         warnings.warn("scheduler attributes has no params defined, defaulting to {}.")
     params = getattr(scheduler_config, "params", {})
+    print(scheduler_type)
     scheduler_class = registry.get_scheduler_class(scheduler_type)
+    print(scheduler_class)
     scheduler = scheduler_class(optimizer, **params)
 
     return scheduler
