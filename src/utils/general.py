@@ -25,7 +25,6 @@ def lr_lambda_update(i_iter, cfg):
         return pow(cfg.training.lr_ratio, idx)
 
 
-
 def get_mmf_root():
     from src.common.registry import registry
 
