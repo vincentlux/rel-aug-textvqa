@@ -1,8 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import pytorch_lightning as pl
-from mmf.datasets.multi_dataset_loader import MultiDatasetLoader
-from mmf.utils.general import get_batch_size
+from src.datasets.multi_dataset_loader import MultiDatasetLoader
+from src.utils.general import get_batch_size
 
 
 class LightningDataModule(pl.LightningDataModule):

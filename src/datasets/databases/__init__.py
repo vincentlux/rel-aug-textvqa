@@ -1,5 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import mmf.datasets.databases.readers  # noqa
+import src.datasets.databases.readers  # noqa
 
 from .annotation_database import AnnotationDatabase
 from .features_database import FeaturesDatabase

@@ -35,7 +35,7 @@ Example::
 .. _here: https://github.com/facebookresearch/mmf/blob/master/mmf/datasets/vqa/vqa2/builder.py
 """
 
-from mmf.utils.distributed import is_master, synchronize
+from src.utils.distributed import is_master, synchronize
 
 
 class BaseDatasetBuilder:

@@ -3,8 +3,8 @@ import json
 
 import numpy as np
 import torch
-from mmf.utils.file_io import PathManager
-from mmf.utils.general import get_absolute_path
+from src.utils.file_io import PathManager
+from src.utils.general import get_absolute_path
 
 
 class AnnotationDatabase(torch.utils.data.Dataset):
@@ -72,7 +72,7 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             raise RuntimeError("Dataset is empty")
 
     def _load_visual_dialog(self, path):
-        from mmf.datasets.builders.visual_dialog.database import VisualDialogDatabase
+        from src.datasets.builders.visual_dialog.database import VisualDialogDatabase
 
         self.data = VisualDialogDatabase(path)
         self.metadata = self.data.metadata

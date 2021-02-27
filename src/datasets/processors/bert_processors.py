@@ -3,9 +3,9 @@
 import random
 
 import torch
-from mmf.common.registry import registry
-from mmf.common.sample import Sample, SampleList
-from mmf.datasets.processors.processors import BaseProcessor
+from src.common.registry import registry
+from src.common.sample import Sample, SampleList
+from src.datasets.processors.processors import BaseProcessor
 from transformers.tokenization_auto import AutoTokenizer
 
 

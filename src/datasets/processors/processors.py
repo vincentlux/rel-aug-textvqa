@@ -79,13 +79,13 @@ from typing import Any, Dict, Union
 
 import numpy as np
 import torch
-from mmf.common.registry import registry
-from mmf.common.typings import ProcessorConfigType
-from mmf.utils.configuration import get_mmf_cache_dir, get_mmf_env
-from mmf.utils.distributed import is_master, synchronize
-from mmf.utils.file_io import PathManager
-from mmf.utils.text import VocabDict
-from mmf.utils.vocab import Vocab, WordToVectorDict
+from src.common.registry import registry
+from src.common.typings import ProcessorConfigType
+from src.utils.configuration import get_mmf_cache_dir, get_mmf_env
+from src.utils.distributed import is_master, synchronize
+from src.utils.file_io import PathManager
+from src.utils.text import VocabDict
+from src.utils.vocab import Vocab, WordToVectorDict
 
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ class BatchProcessor(BaseProcessor):
 
         # Since build_processors also imports processor, import it at runtime to
         # avoid circular dependencies
-        from mmf.utils.build import build_processors
+        from src.utils.build import build_processors
 
         self.processors = build_processors(processors_dict, **extra_params)
 
@@ -465,7 +465,7 @@ class FastTextProcessor(VocabProcessor):
         import requests
         from tqdm import tqdm
 
-        from mmf.common.constants import FASTTEXT_WIKI_URL
+        from src.common.constants import FASTTEXT_WIKI_URL
 
         PathManager.mkdirs(os.path.dirname(model_file_path))
         response = requests.get(FASTTEXT_WIKI_URL, stream=True)
@@ -830,7 +830,7 @@ class SimpleWordProcessor(BaseProcessor):
     """
 
     def __init__(self, *args, **kwargs):
-        from mmf.utils.text import word_tokenize
+        from src.utils.text import word_tokenize
 
         self.tokenizer = word_tokenize
 
@@ -848,7 +848,7 @@ class SimpleSentenceProcessor(BaseProcessor):
     """
 
     def __init__(self, *args, **kwargs):
-        from mmf.utils.text import tokenize
+        from src.utils.text import tokenize
 
         self.tokenizer = tokenize
 
@@ -895,7 +895,7 @@ class BBoxProcessor(VocabProcessor):
     """
 
     def __init__(self, config, *args, **kwargs):
-        from mmf.utils.dataset import build_bbox_tensors
+        from src.utils.dataset import build_bbox_tensors
 
         self.lambda_fn = build_bbox_tensors
         self._init_extras(config)
@@ -1160,7 +1160,7 @@ class PhocProcessor(VocabProcessor):
     """
 
     def __init__(self, config, *args, **kwargs):
-        from mmf.utils.phoc import build_phoc
+        from src.utils.phoc import build_phoc
 
         self._build_phoc = build_phoc
         self._init_extras(config)

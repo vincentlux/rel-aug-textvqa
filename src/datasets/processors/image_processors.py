@@ -6,8 +6,8 @@ import random
 import warnings
 
 import torch
-from mmf.common.registry import registry
-from mmf.datasets.processors.processors import BaseProcessor
+from src.common.registry import registry
+from src.datasets.processors.processors import BaseProcessor
 from omegaconf import OmegaConf
 from torchvision import transforms
 
