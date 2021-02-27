@@ -1,5 +1,18 @@
 import torch
 
+
+def word_tokenize(word, remove=None):
+    if remove is None:
+        remove = [",", "?"]
+    word = word.lower()
+
+    for item in remove:
+        word = word.replace(item, "")
+    word = word.replace("'s", " 's")
+
+    return word.strip()
+
+
 class TextDecoder:
     """Base class to be inherited by all decoding strategies. Contains
     implementations that are common for all strategies.

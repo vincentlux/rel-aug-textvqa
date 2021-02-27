@@ -51,7 +51,7 @@ class BaseDataset(Dataset):
         if not hasattr(self.config, "processors"):
             return
 
-        from mmf.utils.build import build_processors
+        from src.utils.build import build_processors
 
         extra_params = {"data_dir": self.config.data_dir}
         reg_key = f"{self._dataset_name}_{{}}"
