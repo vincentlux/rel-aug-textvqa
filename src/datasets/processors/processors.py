@@ -81,11 +81,11 @@ import numpy as np
 import torch
 from src.common.registry import registry
 from src.common.typings import ProcessorConfigType
-# from src.utils.configuration import get_mmf_cache_dir, get_mmf_env
+from src.utils.configuration import get_mmf_cache_dir, get_mmf_env
 from src.utils.distributed import is_master, synchronize
 from src.utils.file_io import PathManager
 from src.utils.text import VocabDict
-# from src.utils.vocab import Vocab, WordToVectorDict
+from src.utils.vocab import Vocab, WordToVectorDict
 
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,284 @@ class SimpleWordProcessor(BaseProcessor):
 
     def __call__(self, item, *args, **kwargs):
         return {"text": self.tokenizer(item["text"], *args, **kwargs)}
+
+
+@registry.register_processor("vocab")
+class VocabProcessor(BaseProcessor):
+    """Use VocabProcessor when you have vocab file and you want to process
+    words to indices. Expects UNK token as "<unk>" and pads sentences using
+    "<pad>" token. Config parameters can have ``preprocessor`` property which
+    is used to preprocess the item passed and ``max_length`` property which
+    points to maximum length of the sentence/tokens which can be convert to
+    indices. If the length is smaller, the sentence will be padded. Parameters
+    for "vocab" are necessary to be passed.
+
+    **Key**: vocab
+
+    Example Config::
+
+        dataset_config:
+          vqa2:
+            data_dir: ${env.data_dir}
+            processors:
+              text_processor:
+                type: vocab
+                params:
+                  max_length: 14
+                  vocab:
+                    type: intersected
+                    embedding_name: glove.6B.300d
+                    vocab_file: vqa2/defaults/extras/vocabs/vocabulary_100k.txt
+
+    Args:
+        config (DictConfig): node containing configuration parameters of
+                             the processor
+
+    Attributes:
+        vocab (Vocab): Vocab class object which is abstraction over the vocab
+                       file passed.
+    """
+
+    MAX_LENGTH_DEFAULT = 50
+    PAD_TOKEN = "<pad>"
+    PAD_INDEX = 0
+
+    def __init__(self, config, *args, **kwargs):
+        if not hasattr(config, "vocab"):
+            raise AttributeError(
+                "config passed to the processor has no attribute vocab"
+            )
+
+        self.vocab = Vocab(*args, **config.vocab, **kwargs)
+        self._init_extras(config)
+
+    def _init_extras(self, config, *args, **kwargs):
+        self.preprocessor = None
+
+        if hasattr(config, "max_length"):
+            self.max_length = config.max_length
+        else:
+            warnings.warn(
+                "No 'max_length' parameter in Processor's "
+                "configuration. Setting to {}.".format(self.MAX_LENGTH_DEFAULT)
+            )
+            self.max_length = self.MAX_LENGTH_DEFAULT
+
+        if "preprocessor" in config:
+            self.preprocessor = Processor(config.preprocessor, *args, **kwargs)
+
+            if self.preprocessor is None:
+                raise ValueError(
+                    f"No text processor named {config.preprocessor} is defined."
+                )
+
+    def __call__(self, item):
+        """Call requires item to have either "tokens" attribute or either
+        "text" attribute. If "text" is present, it will tokenized using
+        the preprocessor.
+
+        Args:
+            item (Dict): Dict containing the "text" or "tokens".
+
+        Returns:
+            Dict: Dict containing indices in "text" key, "tokens" in "tokens"
+                  key and "length" of the string in "length" key.
+
+        """
+        indices = None
+        if not isinstance(item, dict):
+            raise TypeError(
+                "Argument passed to the processor must be "
+                "a dict with either 'text' or 'tokens' as "
+                "keys"
+            )
+        if "tokens" in item:
+            tokens = item["tokens"]
+            indices = self._map_strings_to_indices(item["tokens"])
+        elif "text" in item:
+            if self.preprocessor is None:
+                raise AssertionError(
+                    "If tokens are not provided, a text "
+                    "processor must be defined in the config"
+                )
+
+            tokens = self.preprocessor({"text": item["text"]})["text"]
+            indices = self._map_strings_to_indices(tokens)
+        else:
+            raise AssertionError(
+                "A dict with either 'text' or 'tokens' keys "
+                "must be passed to the processor"
+            )
+
+        tokens, length = self._pad_tokens(tokens)
+
+        return {"text": indices, "tokens": tokens, "length": length}
+
+    def _pad_tokens(self, tokens):
+        padded_tokens = [self.PAD_TOKEN] * self.max_length
+        token_length = min(len(tokens), self.max_length)
+        padded_tokens[:token_length] = tokens[:token_length]
+        token_length = torch.tensor(token_length, dtype=torch.long)
+        return padded_tokens, token_length
+
+    def get_pad_index(self):
+        """Get index of padding <pad> token in vocabulary.
+
+        Returns:
+            int: index of the padding token.
+
+        """
+        return self.vocab.get_pad_index()
+
+    def get_vocab_size(self):
+        """Get size of the vocabulary.
+
+        Returns:
+            int: size of the vocabulary.
+
+        """
+        return self.vocab.get_size()
+
+    def _map_strings_to_indices(self, tokens):
+        length = min(len(tokens), self.max_length)
+        tokens = tokens[:length]
+
+        output = torch.zeros(self.max_length, dtype=torch.long)
+        output.fill_(self.vocab.get_pad_index())
+
+        for idx, token in enumerate(tokens):
+            output[idx] = self.vocab.stoi[token]
+
+        return output
+
+
+@registry.register_processor("fasttext")
+class FastTextProcessor(VocabProcessor):
+    """FastText processor, similar to GloVe processor but returns FastText vectors.
+
+    Args:
+        config (DictConfig): Configuration values for the processor.
+
+    """
+
+    def __init__(self, config, *args, **kwargs):
+        self._init_extras(config)
+        self.config = config
+        self._download_initially = config.get("download_initially", True)
+        self._already_downloaded = False
+        self._already_loaded = False
+
+        if self._download_initially:
+            self._try_download()
+
+    def _try_download(self):
+        _is_master = is_master()
+
+        if self._already_downloaded:
+            return
+
+        needs_download = False
+
+        if not hasattr(self.config, "model_file"):
+            if _is_master:
+                warnings.warn(
+                    "'model_file' key is required but missing "
+                    "from FastTextProcessor's config."
+                )
+            needs_download = True
+
+        model_file = self.config.model_file
+        # If model_file is already an existing path don't join to cache dir
+        if not PathManager.exists(model_file):
+            model_file = os.path.join(get_mmf_cache_dir(), model_file)
+
+        if not PathManager.exists(model_file):
+            if _is_master:
+                warnings.warn(f"No model file present at {model_file}.")
+            needs_download = True
+
+        if needs_download:
+            logger.info("Downloading FastText bin")
+            model_file = self._download_model()
+
+        self.model_file = model_file
+        self._already_downloaded = True
+        synchronize()
+
+    def _download_model(self):
+        _is_master = is_master()
+
+        model_file_path = os.path.join(get_mmf_cache_dir(), "wiki.en.bin")
+
+        if not _is_master:
+            return model_file_path
+
+        if PathManager.exists(model_file_path):
+            logger.info(f"Vectors already present at {model_file_path}.")
+            return model_file_path
+
+        import requests
+        from tqdm import tqdm
+
+        from src.common.constants import FASTTEXT_WIKI_URL
+
+        PathManager.mkdirs(os.path.dirname(model_file_path))
+        response = requests.get(FASTTEXT_WIKI_URL, stream=True)
+
+        with PathManager.open(model_file_path, "wb") as f:
+            pbar = tqdm(
+                total=int(response.headers["Content-Length"]) / 4096,
+                miniters=50,
+                disable=not _is_master,
+            )
+
+            idx = 0
+            for data in response.iter_content(chunk_size=4096):
+                if data:
+                    if idx % 50 == 0:
+                        pbar.update(len(data))
+                    f.write(data)
+                    idx += 1
+
+            pbar.close()
+
+        logger.info(f"fastText bin downloaded at {model_file_path}.")
+
+        return model_file_path
+
+    def _load_fasttext_model(self, model_file):
+        if self._already_loaded:
+            return
+
+        from fasttext import load_model
+
+        logger.info(f"Loading fasttext model now from {model_file}")
+
+        self.model = load_model(model_file)
+        # String to Vector
+        self.stov = WordToVectorDict(self.model)
+        logger.info("Finished loading fasttext model")
+
+        self._already_loaded = True
+
+    def _map_strings_to_indices(self, tokens):
+        length = min(len(tokens), self.max_length)
+        tokens = tokens[:length]
+
+        output = torch.full(
+            (self.max_length, self.model.get_dimension()),
+            fill_value=self.PAD_INDEX,
+            dtype=torch.float,
+        )
+
+        for idx, token in enumerate(tokens):
+            output[idx] = torch.from_numpy(self.stov[token])
+
+        return output
+
+    def __call__(self, item):
+        self._load_fasttext_model(self.model_file)
+        return super().__call__(item)
 
 
 @registry.register_processor("m4c_answer")
@@ -362,3 +640,101 @@ class M4CAnswerProcessor(BaseProcessor):
             "train_loss_mask": train_loss_mask,
         }
         return answer_info
+
+
+@registry.register_processor("phoc")
+class PhocProcessor(VocabProcessor):
+    """
+    Compute PHOC features from text tokens
+    """
+
+    def __init__(self, config, *args, **kwargs):
+        from src.utils.phoc import build_phoc
+
+        self._build_phoc = build_phoc
+        self._init_extras(config)
+        self.config = config
+
+    def _map_strings_to_indices(self, tokens):
+        length = min(len(tokens), self.max_length)
+        tokens = tokens[:length]
+
+        phoc_dim = 604
+        output = torch.full(
+            (self.max_length, phoc_dim), fill_value=self.PAD_INDEX, dtype=torch.float
+        )
+
+        for idx, token in enumerate(tokens):
+            output[idx] = torch.from_numpy(self._build_phoc(token))
+
+        return output
+
+
+@registry.register_processor("copy")
+class CopyProcessor(BaseProcessor):
+    """
+    Copy boxes from numpy array
+    """
+
+    def __init__(self, config, *args, **kwargs):
+        self.max_length = config.max_length
+
+    def __call__(self, item):
+        blob = item["blob"]
+        final_blob = np.zeros((self.max_length,) + blob.shape[1:], blob.dtype)
+        final_blob[: len(blob)] = blob[: len(final_blob)]
+
+        return {"blob": torch.from_numpy(final_blob)}
+
+
+@registry.register_processor("bbox")
+class BBoxProcessor(VocabProcessor):
+    """Generates bboxes in proper format.
+    Takes in a dict which contains "info" key which is a list of dicts
+    containing following for each of the the bounding box
+
+    Example bbox input::
+
+        {
+            "info": [
+                {
+                    "bounding_box": {
+                        "top_left_x": 100,
+                        "top_left_y": 100,
+                        "width": 200,
+                        "height": 300
+                    }
+                },
+                ...
+            ]
+        }
+
+
+    This will further return a Sample in a dict with key "bbox" with last
+    dimension of 4 corresponding to "xyxy". So sample will look like following:
+
+    Example Sample::
+
+        Sample({
+            "coordinates": torch.Size(n, 4),
+            "width": List[number], # size n
+            "height": List[number], # size n
+            "bbox_types": List[str] # size n, either xyxy or xywh.
+            # currently only supports xyxy.
+        })
+
+    """
+
+    def __init__(self, config, *args, **kwargs):
+        from src.utils.dataset import build_bbox_tensors
+
+        self.lambda_fn = build_bbox_tensors
+        self._init_extras(config)
+
+    def __call__(self, item):
+        info = item["info"]
+        if self.preprocessor is not None:
+            info = self.preprocessor(info)
+
+        return {"bbox": self.lambda_fn(info, self.max_length)}
+

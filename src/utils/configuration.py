@@ -30,6 +30,15 @@ def get_default_config_path():
         return os.path.join(configs_dir, "defaults.yaml")
 
 
+def get_mmf_cache_dir():
+    config = get_global_config()
+    cache_dir = config.env.cache_dir
+    # If cache_dir path exists do not join to mmf root
+    if not os.path.exists(cache_dir):
+        cache_dir = os.path.join(get_mmf_root(), cache_dir)
+    return cache_dir
+
+
 def load_yaml(f):
     # Convert to absolute path for loading includes
     abs_f = get_absolute_path(f)
