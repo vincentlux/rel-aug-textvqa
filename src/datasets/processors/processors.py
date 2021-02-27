@@ -109,9 +109,9 @@ class Processor:
             raise AttributeError(
                 "Config must have 'type' attribute to specify type of processor"
             )
-
+        print(config.type)
         processor_class = registry.get_processor_class(config.type)
-
+        print(processor_class)
         params = {}
         if "params" not in config:
             logger.warning(
