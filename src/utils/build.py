@@ -330,3 +330,11 @@ def build_scheduler(optimizer, config):
 
     return scheduler
 
+def build_image_encoder(config, direct_features=False, **kwargs):
+    from src.modules.encoders import ImageEncoderFactory, ImageFeatureEncoderFactory
+
+    if direct_features:
+        module = ImageFeatureEncoderFactory(config)
+    else:
+        module = ImageEncoderFactory(config)
+    return module.module
