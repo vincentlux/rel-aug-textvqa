@@ -84,7 +84,7 @@ from src.common.typings import ProcessorConfigType
 # from src.utils.configuration import get_mmf_cache_dir, get_mmf_env
 from src.utils.distributed import is_master, synchronize
 from src.utils.file_io import PathManager
-# from src.utils.text import VocabDict
+from src.utils.text import VocabDict
 # from src.utils.vocab import Vocab, WordToVectorDict
 
 
@@ -164,3 +164,183 @@ class BaseProcessor:
 
         """
         return item
+
+
+@registry.register_processor("m4c_answer")
+class M4CAnswerProcessor(BaseProcessor):
+    """
+    Process a TextVQA answer for iterative decoding in M4C
+    """
+
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+
+        self.answer_vocab = VocabDict(config.vocab_file, *args, **kwargs)
+        self.PAD_IDX = self.answer_vocab.word2idx("<pad>")
+        self.BOS_IDX = self.answer_vocab.word2idx("<s>")
+        self.EOS_IDX = self.answer_vocab.word2idx("</s>")
+        self.UNK_IDX = self.answer_vocab.UNK_INDEX
+
+        # make sure PAD_IDX, BOS_IDX and PAD_IDX are valid (not <unk>)
+        assert self.PAD_IDX != self.answer_vocab.UNK_INDEX
+        assert self.BOS_IDX != self.answer_vocab.UNK_INDEX
+        assert self.EOS_IDX != self.answer_vocab.UNK_INDEX
+        assert self.PAD_IDX == 0
+
+        self.answer_preprocessor = Processor(config.preprocessor)
+        assert self.answer_preprocessor is not None
+
+        self.num_answers = config.num_answers
+        self.max_length = config.max_length
+        self.max_copy_steps = config.max_copy_steps
+        assert self.max_copy_steps >= 1
+
+        self.match_answer_to_unk = False
+
+    def tokenize(self, sentence):
+        return sentence.split()
+
+    def match_answer_to_vocab_ocr_seq(
+        self, answer, vocab2idx_dict, ocr2inds_dict, max_match_num=20
+    ):
+        """
+        Match an answer to a list of sequences of indices
+        each index corresponds to either a fixed vocabulary or an OCR token
+        (in the index address space, the OCR tokens are after the fixed vocab)
+        """
+        num_vocab = len(vocab2idx_dict)
+
+        answer_words = self.tokenize(answer)
+        answer_word_matches = []
+        for word in answer_words:
+            # match answer word to fixed vocabulary
+            matched_inds = []
+            if word in vocab2idx_dict:
+                matched_inds.append(vocab2idx_dict.get(word))
+            # match answer word to OCR
+            # we put OCR after the fixed vocabulary in the answer index space
+            # so add num_vocab offset to the OCR index
+            matched_inds.extend([num_vocab + idx for idx in ocr2inds_dict[word]])
+            if len(matched_inds) == 0:
+                if self.match_answer_to_unk:
+                    matched_inds.append(vocab2idx_dict.get("<unk>"))
+                else:
+                    return []
+            answer_word_matches.append(matched_inds)
+
+        # expand per-word matched indices into the list of matched sequences
+        if len(answer_word_matches) == 0:
+            return []
+        idx_seq_list = [()]
+        for matched_inds in answer_word_matches:
+            idx_seq_list = [
+                seq + (idx,) for seq in idx_seq_list for idx in matched_inds
+            ]
+            if len(idx_seq_list) > max_match_num:
+                idx_seq_list = idx_seq_list[:max_match_num]
+
+        return idx_seq_list
+
+    def get_vocab_size(self):
+        answer_vocab_nums = self.answer_vocab.num_vocab
+        answer_vocab_nums += self.max_length
+
+        return answer_vocab_nums
+
+    def get_true_vocab_size(self):
+        return self.answer_vocab.num_vocab
+
+    def compute_answer_scores(self, answers):
+        gt_answers = list(enumerate(answers))
+        unique_answers = sorted(set(answers))
+        unique_answer_scores = [0] * len(unique_answers)
+        for idx, unique_answer in enumerate(unique_answers):
+            accs = []
+            for gt_answer in gt_answers:
+                other_answers = [item for item in gt_answers if item != gt_answer]
+                matching_answers = [
+                    item for item in other_answers if item[1] == unique_answer
+                ]
+                acc = min(1, float(len(matching_answers)) / 3)
+                accs.append(acc)
+            unique_answer_scores[idx] = sum(accs) / len(accs)
+        unique_answer2score = {
+            a: s for a, s in zip(unique_answers, unique_answer_scores)
+        }
+        return unique_answer2score
+
+    def __call__(self, item):
+        answers = item["answers"]
+
+        if not answers:
+            return {
+                "sampled_idx_seq": None,
+                "train_prev_inds": torch.zeros(self.max_copy_steps, dtype=torch.long),
+            }
+
+        answers = [self.answer_preprocessor({"text": a})["text"] for a in answers]
+        assert len(answers) == self.num_answers
+
+        # Step 1: calculate the soft score of ground-truth answers
+        unique_answer2score = self.compute_answer_scores(answers)
+
+        # Step 2: fill the first step soft scores for tokens
+        scores = torch.zeros(
+            self.max_copy_steps, self.get_vocab_size(), dtype=torch.float
+        )
+
+        # match answers to fixed vocabularies and OCR tokens.
+        ocr2inds_dict = defaultdict(list)
+        for idx, token in enumerate(item["tokens"]):
+            ocr2inds_dict[token].append(idx)
+        answer_dec_inds = [
+            self.match_answer_to_vocab_ocr_seq(
+                a, self.answer_vocab.word2idx_dict, ocr2inds_dict
+            )
+            for a in answers
+        ]
+
+        # Collect all the valid decoding sequences for each answer.
+        # This part (idx_seq_list) was pre-computed in imdb (instead of online)
+        # to save time
+        all_idx_seq_list = []
+        for answer, idx_seq_list in zip(answers, answer_dec_inds):
+            all_idx_seq_list.extend(idx_seq_list)
+            # fill in the soft score for the first decoding step
+            score = unique_answer2score[answer]
+            for idx_seq in idx_seq_list:
+                score_idx = idx_seq[0]
+                # the scores for the decoding Step 0 will be the maximum
+                # among all answers starting with that vocab
+                # for example:
+                # if "red apple" has score 0.7 and "red flag" has score 0.8
+                # the score for "red" at Step 0 will be max(0.7, 0.8) = 0.8
+                scores[0, score_idx] = max(scores[0, score_idx], score)
+
+        # train_prev_inds is the previous prediction indices in auto-regressive
+        # decoding
+        train_prev_inds = torch.zeros(self.max_copy_steps, dtype=torch.long)
+        # train_loss_mask records the decoding steps where losses are applied
+        train_loss_mask = torch.zeros(self.max_copy_steps, dtype=torch.float)
+        if len(all_idx_seq_list) > 0:
+            # sample a random decoding answer sequence for teacher-forcing
+            idx_seq = all_idx_seq_list[np.random.choice(len(all_idx_seq_list))]
+            dec_step_num = min(1 + len(idx_seq), self.max_copy_steps)
+            train_loss_mask[:dec_step_num] = 1.0
+
+            train_prev_inds[0] = self.BOS_IDX
+            for t in range(1, dec_step_num):
+                train_prev_inds[t] = idx_seq[t - 1]
+                score_idx = idx_seq[t] if t < len(idx_seq) else self.EOS_IDX
+                scores[t, score_idx] = 1.0
+        else:
+            idx_seq = ()
+
+        answer_info = {
+            "answers": answers,
+            "answers_scores": scores,
+            "sampled_idx_seq": idx_seq,
+            "train_prev_inds": train_prev_inds,
+            "train_loss_mask": train_loss_mask,
+        }
+        return answer_info
