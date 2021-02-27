@@ -3,10 +3,6 @@ model_config:
     losses:
     - type: m4c_decoding_bce_with_mask
 
-env:
-  cache_dir: ./data
-  save_dir: ./snap
-
 dataset_config:
   textvqa:
     zoo_requirements:
