@@ -238,4 +238,3 @@ class TextVQAAccuracy(BaseMetric):
         accuracy = torch.tensor(accuracy).to(sample_list.context_tokens.device)
 
         return accuracy
-    

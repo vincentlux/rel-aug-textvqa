@@ -8,11 +8,22 @@ import logging
 import math
 import torch
 import warnings
+from bisect import bisect
 
 from torch import nn
 
 from src.utils.distributed import get_rank, get_world_size
 logger = logging.getLogger(__name__)
+
+
+def lr_lambda_update(i_iter, cfg):
+    if cfg.training.use_warmup is True and i_iter <= cfg.training.warmup_iterations:
+        alpha = float(i_iter) / float(cfg.training.warmup_iterations)
+        return cfg.training.warmup_factor * (1.0 - alpha) + alpha
+    else:
+        idx = bisect(cfg.training.lr_steps, i_iter)
+        return pow(cfg.training.lr_ratio, idx)
+
 
 
 def get_mmf_root():
