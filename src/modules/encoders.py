@@ -11,13 +11,13 @@ from typing import Any
 import torch
 import torchvision
 from src.common.registry import registry
-# from src.modules.embeddings import ProjectionEmbedding, TextEmbedding
+from src.modules.embeddings import ProjectionEmbedding
 # from src.modules.hf_layers import BertModelJit
 from src.modules.layers import Identity
 # from src.utils.build import build_image_encoder, build_text_encoder
-# from src.utils.download import download_pretrained_model
-# from src.utils.file_io import PathManager
-# from src.utils.general import get_absolute_path
+from src.utils.download import download_pretrained_model
+from src.utils.file_io import PathManager
+from src.utils.general import get_absolute_path
 from omegaconf import MISSING, OmegaConf
 from torch import nn
 from transformers.configuration_auto import AutoConfig
@@ -88,6 +88,56 @@ class ImageEncoderFactory(EncoderFactory):
 
     def forward(self, image):
         return self.module(image)
+
+
+class ImageFeatureEncoderTypes(Enum):
+    default = "default"
+    identity = "identity"
+    projection = "projection"
+    frcnn_fc7 = "finetune_faster_rcnn_fpn_fc7"
+
+
+class ImageFeatureEncoder(Encoder):
+    @dataclass
+    class Config(Encoder.Config):
+        in_dim: int = MISSING
+
+
+class ImageFeatureEncoderFactory(EncoderFactory):
+    @dataclass
+    class Config(EncoderFactory.Config):
+        type: ImageFeatureEncoderTypes = MISSING
+        params: ImageFeatureEncoder.Config = MISSING
+
+    def __init__(self, config: Config, *args, **kwargs):
+        super().__init__()
+        encoder_type = config.type
+        if isinstance(encoder_type, ImageFeatureEncoderTypes):
+            encoder_type = encoder_type.value
+
+        assert (
+            "in_dim" in config.params
+        ), "ImageFeatureEncoder require 'in_dim' param in config"
+        params = config.params
+
+        if encoder_type == "default" or encoder_type == "identity":
+            self.module = Identity()
+            self.module.in_dim = params.in_dim
+            self.module.out_dim = params.in_dim
+        elif encoder_type == "projection":
+            if "module" not in params:
+                params = deepcopy(params)
+                params.module = "linear"
+            self.module = ProjectionEmbedding(**params)
+        elif encoder_type == "finetune_faster_rcnn_fpn_fc7":
+            self.module = FinetuneFasterRcnnFpnFc7(params)
+        else:
+            raise NotImplementedError("Unknown Image Encoder: %s" % encoder_type)
+
+        self.out_dim = self.module.out_dim
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **kwargs)
 
 
 # Taken from facebookresearch/mmbt with some modifications
@@ -198,3 +248,70 @@ class Detectron2ResnetImageEncoder(Encoder):
     def forward(self, x):
         x = self.resnet(x)
         return x["res5"]
+
+
+@registry.register_encoder("finetune_faster_rcnn_fpn_fc7")
+class FinetuneFasterRcnnFpnFc7(ImageFeatureEncoder):
+    @dataclass
+    class Config(ImageFeatureEncoder.Config):
+        name: str = "finetune_faster_rcnn_fpn_fc7"
+        in_dim: int = MISSING
+        weights_file: str = "fc7_w.pkl"
+        bias_file: str = "fc7_b.pkl"
+        model_data_dir: str = MISSING
+
+    def __init__(self, config: Config, *args, **kwargs):
+        super().__init__()
+        model_data_dir = get_absolute_path(config.model_data_dir)
+
+        if not os.path.isabs(config.weights_file):
+            weights_file = os.path.join(model_data_dir, config.weights_file)
+        if not os.path.isabs(config.bias_file):
+            bias_file = os.path.join(model_data_dir, config.bias_file)
+
+        if not PathManager.exists(bias_file) or not PathManager.exists(weights_file):
+            download_path = download_pretrained_model("detectron.vmb_weights")
+            weights_file = get_absolute_path(os.path.join(download_path, "fc7_w.pkl"))
+            bias_file = get_absolute_path(os.path.join(download_path, "fc7_b.pkl"))
+
+        with PathManager.open(weights_file, "rb") as w:
+            weights = pickle.load(w)
+        with PathManager.open(bias_file, "rb") as b:
+            bias = pickle.load(b)
+        out_dim = bias.shape[0]
+
+        self.lc = nn.Linear(config.in_dim, out_dim)
+        self.lc.weight.data.copy_(torch.from_numpy(weights))
+        self.lc.bias.data.copy_(torch.from_numpy(bias))
+        self.out_dim = out_dim
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        old_prefix = prefix + "module."
+        for k in list(state_dict.keys()):
+            if k.startswith(old_prefix):
+                new_k = k.replace(old_prefix, prefix)
+                state_dict[new_k] = state_dict.pop(k)
+
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
+    def forward(self, image):
+        i2 = self.lc(image)
+        i3 = nn.functional.relu(i2)
+        return i3
