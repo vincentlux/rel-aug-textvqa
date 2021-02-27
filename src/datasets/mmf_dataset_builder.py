@@ -4,13 +4,13 @@ import typing
 import warnings
 from copy import deepcopy
 
-import src.utils.download as download
+import mmf.utils.download as download
 import torch
-from src.datasets.base_dataset_builder import BaseDatasetBuilder
-from src.datasets.concat_dataset import MMFConcatDataset
-from src.datasets.subset_dataset import MMFSubset
-from src.utils.configuration import get_global_config, get_mmf_env, get_zoo_config
-from src.utils.general import get_absolute_path
+from mmf.datasets.base_dataset_builder import BaseDatasetBuilder
+from mmf.datasets.concat_dataset import MMFConcatDataset
+from mmf.datasets.subset_dataset import MMFSubset
+from mmf.utils.configuration import get_global_config, get_mmf_env, get_zoo_config
+from mmf.utils.general import get_absolute_path
 from omegaconf import open_dict
 
 

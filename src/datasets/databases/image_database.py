@@ -5,8 +5,8 @@ import os
 import torch
 import torchvision
 import torchvision.datasets.folder as tv_helpers
-from src.utils.file_io import PathManager
-from src.utils.general import get_absolute_path
+from mmf.utils.file_io import PathManager
+from mmf.utils.general import get_absolute_path
 from PIL import Image
 
 

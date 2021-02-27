@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from src.common.registry import registry
-from src.common.sample import SampleList
-from src.utils.general import get_current_device
+from mmf.common.registry import registry
+from mmf.common.sample import SampleList
+from mmf.utils.general import get_current_device
 from torch.utils.data.dataset import Dataset
 
 
@@ -51,7 +51,7 @@ class BaseDataset(Dataset):
         if not hasattr(self.config, "processors"):
             return
 
-        from src.utils.build import build_processors
+        from mmf.utils.build import build_processors
 
         extra_params = {"data_dir": self.config.data_dir}
         reg_key = f"{self._dataset_name}_{{}}"

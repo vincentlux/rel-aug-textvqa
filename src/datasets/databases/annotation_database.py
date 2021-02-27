@@ -3,8 +3,8 @@ import json
 
 import numpy as np
 import torch
-from src.utils.file_io import PathManager
-from src.utils.general import get_absolute_path
+from mmf.utils.file_io import PathManager
+from mmf.utils.general import get_absolute_path
 
 
 class AnnotationDatabase(torch.utils.data.Dataset):
@@ -23,7 +23,9 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         self.load_annotation_db(path)
 
     def load_annotation_db(self, path):
-        if path.endswith(".npy"):
+        if path.find("visdial") != -1 or path.find("visual_dialog") != -1:
+            self._load_visual_dialog(path)
+        elif path.endswith(".npy"):
             self._load_npy(path)
         elif path.endswith(".jsonl"):
             self._load_jsonl(path)
@@ -68,6 +70,13 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
         if len(self.data) == 0:
             raise RuntimeError("Dataset is empty")
+
+    def _load_visual_dialog(self, path):
+        from mmf.datasets.builders.visual_dialog.database import VisualDialogDatabase
+
+        self.data = VisualDialogDatabase(path)
+        self.metadata = self.data.metadata
+        self.start_idx = 0
 
     def __len__(self):
         return len(self.data) - self.start_idx
