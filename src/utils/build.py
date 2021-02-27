@@ -11,7 +11,7 @@ from src.common.registry import registry
 from src.utils.distributed import is_dist_initialized
 from src.utils.general import get_optimizer_parameters
 from src.utils.configuration import Configuration
-
+from omegaconf import DictConfig, OmegaConf
 
 def build_config(
     configuration: Type[Configuration], *args, **kwargs
@@ -34,6 +34,83 @@ def build_config(
     return config
 
 
+def build_dataset(
+    dataset_key: str, config=None, dataset_type="train"
+) -> mmf_typings.DatasetType:
+    """Builder function for creating a dataset. If dataset_key is passed
+    the dataset is created from default config of the dataset and thus is
+    disable config even if it is passed. Otherwise, we use MultiDatasetLoader to
+    build and return an instance of dataset based on the config
+
+    Args:
+        dataset_key (str): Key of dataset to build.
+        config (DictConfig, optional): Configuration that will be used to create
+            the dataset. If not passed, dataset's default config will be used.
+            Defaults to {}.
+        dataset_type (str, optional): Type of the dataset to build, train|val|test.
+            Defaults to "train".
+
+    Returns:
+        (DatasetType): A dataset instance of type BaseDataset
+    """
+    from src.utils.configuration import load_yaml_with_defaults
+
+    dataset_builder = registry.get_builder_class(dataset_key)
+    assert dataset_builder, (
+        f"Key {dataset_key} doesn't have a registered " + "dataset builder"
+    )
+
+    # If config is not provided, we take it from default one
+    if not config:
+        config_path = dataset_builder.config_path()
+        if config_path is None:
+            # If config path wasn't defined, send an empty config path
+            # but don't force dataset to define a config
+            warnings.warn(
+                f"Config path not defined for {dataset_key}, "
+                + "continuing with empty config"
+            )
+            config = OmegaConf.create()
+        else:
+            config = load_yaml_with_defaults(config_path)
+            config = OmegaConf.select(config, f"dataset_config.{dataset_key}")
+            if config is None:
+                config = OmegaConf.create()
+            OmegaConf.set_struct(config, True)
+
+    builder_instance: mmf_typings.DatasetBuilderType = dataset_builder()
+    builder_instance.build_dataset(config, dataset_type)
+    dataset = builder_instance.load_dataset(config, dataset_type)
+    if hasattr(builder_instance, "update_registry_for_model"):
+        builder_instance.update_registry_for_model(config)
+
+    return dataset
+
+
+def build_model(
+    config: Union[DictConfig, "mmf.models.base_model.BaseModel.Config"]
+) -> "mmf.models.base_model.BaseModel":
+    from src.models.base_model import BaseModel
+
+    # If it is not an OmegaConf object, create the object
+    if not isinstance(config, DictConfig) and isinstance(config, BaseModel.Config):
+        config = OmegaConf.structured(config)
+
+    model_name = config.model
+    model_class = registry.get_model_class(model_name)
+
+    if model_class is None:
+        raise RuntimeError(f"No model registered for name: {model_name}")
+    model = model_class(config)
+
+    if hasattr(model, "build"):
+        model.load_requirements()
+        model.build()
+        model.init_losses()
+
+    return model
+
+
 def build_trainer(config: mmf_typings.DictConfig) -> Any:
     """Builder function for creating a trainer class. Trainer class name
     is picked from the config.
@@ -45,11 +122,89 @@ def build_trainer(config: mmf_typings.DictConfig) -> Any:
     Returns:
         (BaseTrainer): A trainer instance
     """
+    import pdb; pdb.set_trace()
     trainer_type = config.training.trainer
     trainer_cls = registry.get_trainer_class(trainer_type)
     trainer_obj = trainer_cls(config)
 
     return trainer_obj
+
+
+def build_dataloader_and_sampler(
+    dataset_instance: mmf_typings.DatasetType, training_config: mmf_typings.DictConfig
+) -> mmf_typings.DataLoaderAndSampler:
+    """Builds and returns a dataloader along with its sample
+
+    Args:
+        dataset_instance (mmf_typings.DatasetType): Instance of dataset for which
+            dataloader has to be created
+        training_config (mmf_typings.DictConfig): Training configuration; required
+            for infering params for dataloader
+
+    Returns:
+        mmf_typings.DataLoaderAndSampler: Tuple of Dataloader and Sampler instance
+    """
+    from src.common.batch_collator import BatchCollator
+
+    num_workers = training_config.num_workers
+    pin_memory = training_config.pin_memory
+
+    other_args = {}
+
+    # IterableDataset returns batches directly, so no need to add Sampler
+    # or batch size as user is expected to control those. This is a fine
+    # assumption for now to not support single item based IterableDataset
+    # as it will add unnecessary complexity and config parameters
+    # to the codebase
+    if not isinstance(dataset_instance, torch.utils.data.IterableDataset):
+        other_args = _add_extra_args_for_dataloader(dataset_instance, other_args)
+
+    loader = torch.utils.data.DataLoader(
+        dataset=dataset_instance,
+        pin_memory=pin_memory,
+        collate_fn=BatchCollator(
+            dataset_instance.dataset_name, dataset_instance.dataset_type
+        ),
+        num_workers=num_workers,
+        drop_last=False,  # see also MultiDatasetLoader.__len__
+        **other_args,
+    )
+
+    if num_workers >= 0:
+        # Suppress leaking semaphore warning
+        os.environ["PYTHONWARNINGS"] = "ignore:semaphore_tracker:UserWarning"
+
+    loader.dataset_type = dataset_instance.dataset_type
+
+    return loader, other_args.get("sampler", None)
+
+
+def _add_extra_args_for_dataloader(
+    dataset_instance: mmf_typings.DatasetType,
+    other_args: mmf_typings.DataLoaderArgsType = None,
+) -> mmf_typings.DataLoaderArgsType:
+    from src.utils.general import get_batch_size
+
+    if other_args is None:
+        other_args = {}
+    dataset_type = dataset_instance.dataset_type
+
+    other_args["shuffle"] = False
+    if dataset_type != "test":
+        other_args["shuffle"] = True
+
+    # In distributed mode, we use DistributedSampler from PyTorch
+    if is_dist_initialized():
+        other_args["sampler"] = torch.utils.data.DistributedSampler(
+            dataset_instance, shuffle=other_args["shuffle"]
+        )
+        # Shuffle is mutually exclusive with sampler, let DistributedSampler
+        # take care of shuffle and pop from main args
+        other_args.pop("shuffle")
+
+    other_args["batch_size"] = get_batch_size()
+
+    return other_args
 
 
 def build_optimizer(model, config):

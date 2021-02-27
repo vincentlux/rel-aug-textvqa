@@ -5,10 +5,13 @@ import os
 from src.utils.file_io import PathManager
 
 import logging
+import math
 import torch
+import warnings
+
 from torch import nn
 
-from src.utils.distributed import get_rank
+from src.utils.distributed import get_rank, get_world_size
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +24,35 @@ def get_mmf_root():
         mmf_root = os.path.abspath(os.path.join(mmf_root, ".."))
         registry.register("mmf_root", mmf_root)
     return mmf_root
+
+
+def ckpt_name_from_core_args(config):
+    seed = config.training.seed
+
+    ckpt_name = f"{config.datasets}_{config.model}"
+
+    if seed is not None:
+        ckpt_name += f"_{seed:d}"
+
+    return ckpt_name
+
+
+def foldername_from_config_override(args):
+    cfg_override = None
+    if hasattr(args, "config_override"):
+        cfg_override = args.config_override
+    elif "config_override" in args:
+        cfg_override = args["config_override"]
+
+    folder_name = ""
+    if cfg_override is not None and len(cfg_override) > 0:
+        folder_name = str(cfg_override)
+        folder_name = folder_name.replace(":", ".").replace("\n", " ")
+        folder_name = folder_name.replace("/", "_")
+        folder_name = " ".join(folder_name.split())
+        folder_name = folder_name.replace(". ", ".").replace(" ", "_")
+        folder_name = "_" + folder_name
+    return folder_name
 
 
 def get_absolute_path(paths):
@@ -62,6 +94,86 @@ def get_absolute_path(paths):
         return [get_absolute_path(path) for path in paths]
     else:
         raise TypeError("Paths passed to dataset should either be " "string or list")
+
+
+def get_batch_size():
+    from src.utils.configuration import get_global_config
+
+    batch_size = get_global_config("training.batch_size")
+
+    world_size = get_world_size()
+
+    if batch_size % world_size != 0:
+        raise RuntimeError(
+            "Batch size {} must be divisible by number "
+            "of GPUs {} used.".format(batch_size, world_size)
+        )
+
+    return batch_size // world_size
+
+
+def print_model_parameters(model, return_only=False):
+    total_params = sum(p.numel() for p in model.parameters())
+    trained_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    if not return_only:
+        logger.info(
+            f"Total Parameters: {total_params}. Trained Parameters: {trained_params}"
+        )
+    return total_params, trained_params
+
+
+def clip_gradients(model, i_iter, writer, config, scale=1.0):
+    max_grad_l2_norm = config.training.max_grad_l2_norm
+    clip_norm_mode = config.training.clip_norm_mode
+
+    if max_grad_l2_norm is not None:
+        if clip_norm_mode == "all":
+            norm = nn.utils.clip_grad_norm_(
+                model.parameters(), max_grad_l2_norm * scale
+            )
+            if writer is not None:
+                writer.add_scalars({"grad_norm": norm}, i_iter)
+        else:
+            raise NotImplementedError(
+                "Clip norm mode %s not implemented" % clip_norm_mode
+            )
+
+
+def get_max_updates(config_max_updates, config_max_epochs, train_loader, update_freq):
+    if config_max_updates is None and config_max_epochs is None:
+        raise ValueError("Neither max_updates nor max_epochs is specified.")
+
+    if isinstance(train_loader.current_dataset, torch.utils.data.IterableDataset):
+        warnings.warn(
+            "max_epochs not supported for Iterable datasets. Falling back "
+            + "to max_updates."
+        )
+        return config_max_updates, config_max_epochs
+
+    if config_max_updates is not None and config_max_epochs is not None:
+        warnings.warn(
+            "Both max_updates and max_epochs are specified. "
+            + f"Favoring max_epochs: {config_max_epochs}"
+        )
+
+    if config_max_epochs is not None:
+        max_updates = math.ceil(len(train_loader) / update_freq) * config_max_epochs
+        max_epochs = config_max_epochs
+    else:
+        max_updates = config_max_updates
+        max_epochs = max_updates / len(train_loader)
+
+    return max_updates, max_epochs
+
+
+
+def updir(d, n):
+    """Given path d, go up n dirs from d and return that path"""
+    ret_val = d
+    for _ in range(n):
+        ret_val = os.path.dirname(ret_val)
+    return ret_val
 
 
 def get_optimizer_parameters(model, config):

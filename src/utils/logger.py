@@ -1,12 +1,17 @@
+import collections
+import json
 import os
 import functools
 import logging
 import sys
-from src.utils.distributed import get_rank
+from src.utils.distributed import get_rank, is_master
 from src.common.registry import registry
 from src.utils.configuration import get_mmf_env
 from src.utils.file_io import PathManager
 from src.utils.timer import Timer
+
+from typing import Any, Dict, Union
+
 
 @functools.lru_cache()
 def setup_output_folder(folder_only: bool = False):
@@ -163,3 +168,103 @@ def setup_very_basic_config(color=True):
     # Setup a minimal configuration for logging in case something tries to
     # log a message even before logging is setup by MMF.
     logging.basicConfig(level=logging.INFO, handlers=[ch])
+
+
+
+
+def _find_caller():
+    """
+    Returns:
+        str: module name of the caller
+        tuple: a hashable key to be used to identify different callers
+    """
+    frame = sys._getframe(2)
+    while frame:
+        code = frame.f_code
+        if os.path.join("utils", "logger.") not in code.co_filename:
+            mod_name = frame.f_globals["__name__"]
+            if mod_name == "__main__":
+                mod_name = "mmf"
+            return mod_name, (code.co_filename, frame.f_lineno, code.co_name)
+        frame = frame.f_back
+
+
+def log_progress(info: Union[Dict, Any], log_format="simple"):
+    """Useful for logging progress dict.
+
+    Args:
+        info (dict|any): If dict, will be logged as key value pair. Otherwise,
+            it will be logged directly.
+
+        log_format (str, optional): json|simple. Defaults to "simple".
+            Will use simple mode.
+    """
+    caller, key = _find_caller()
+    logger = logging.getLogger(caller)
+
+    if not isinstance(info, collections.Mapping):
+        logger.info(info)
+
+    if log_format == "simple":
+        config = registry.get("config")
+        if config:
+            log_format = config.training.log_format
+
+    if log_format == "simple":
+        output = ", ".join([f"{key}: {value}" for key, value in info.items()])
+    elif log_format == "json":
+        output = json.dumps(info)
+    else:
+        output = str(info)
+
+    logger.info(output)
+
+
+class TensorboardLogger:
+    def __init__(self, log_folder="./logs", iteration=0):
+        # This would handle warning of missing tensorboard
+        from torch.utils.tensorboard import SummaryWriter
+
+        self.summary_writer = None
+        self._is_master = is_master()
+        self.timer = Timer()
+        self.log_folder = log_folder
+        self.time_format = "%Y-%m-%dT%H:%M:%S"
+
+        if self._is_master:
+            current_time = self.timer.get_time_hhmmss(None, format=self.time_format)
+            tensorboard_folder = os.path.join(
+                self.log_folder, f"tensorboard_{current_time}"
+            )
+            self.summary_writer = SummaryWriter(tensorboard_folder)
+
+    def __del__(self):
+        if getattr(self, "summary_writer", None) is not None:
+            self.summary_writer.close()
+
+    def _should_log_tensorboard(self):
+        if self.summary_writer is None or not self._is_master:
+            return False
+        else:
+            return True
+
+    def add_scalar(self, key, value, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        self.summary_writer.add_scalar(key, value, iteration)
+
+    def add_scalars(self, scalar_dict, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        for key, val in scalar_dict.items():
+            self.summary_writer.add_scalar(key, val, iteration)
+
+    def add_histogram_for_model(self, model, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        for name, param in model.named_parameters():
+            np_param = param.clone().cpu().data.numpy()
+            self.summary_writer.add_histogram(name, np_param, iteration)

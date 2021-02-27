@@ -26,11 +26,22 @@ class Flags:
             "--local_rank", type=int, default=None, help="Local rank of the argument"
         )
         self.parser.add_argument(
+            "--config", type=str, default=None, help="config yaml"
+        )
+        self.parser.add_argument(
+            "--datasets", type=str, default=None, help="textvqa"
+        )
+        self.parser.add_argument(
+            "--model", type=str, default=None, help="m4c"
+        )
+        self.parser.add_argument(
+            "--run_type", type=str, default=None, help="train/val"
+        )
+        self.parser.add_argument(
             "opts",
             default=None,
             nargs=argparse.REMAINDER,
             help="Modify config options from command line",
         )
-
 
 flags = Flags()

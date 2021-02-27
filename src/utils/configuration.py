@@ -137,6 +137,58 @@ def resolve_dir(env_variable, default="data"):
     return dir_path
 
 
+def load_yaml_with_defaults(f):
+    default_config = get_default_config_path()
+    return OmegaConf.merge(load_yaml(default_config), load_yaml(f))
+
+
+def get_zoo_config(
+    key, variation="defaults", zoo_config_path=None, zoo_type="datasets"
+):
+    version = None
+    resources = None
+    if zoo_config_path is None:
+        zoo_config_path = os.path.join("configs", "zoo", f"{zoo_type}.yaml")
+    zoo = load_yaml(zoo_config_path)
+
+    # Set struct on zoo so that unidentified access is not allowed
+    OmegaConf.set_struct(zoo, True)
+
+    try:
+        item = OmegaConf.select(zoo, key)
+    except Exception:
+        # Key wasn't present or something else happened, return None, None
+        return version, resources
+
+    if not item:
+        return version, resources
+
+    if variation not in item:
+        # If variation is not present, then key value should
+        # be directly returned if "defaults" was selected as the variation
+        assert (
+            variation == "defaults"
+        ), f"'{variation}' variation not present in zoo config"
+        return _get_version_and_resources(item)
+    elif "resources" in item:
+        # Case where full key is directly passed
+        return _get_version_and_resources(item)
+    else:
+        return _get_version_and_resources(item[variation])
+
+
+def _get_version_and_resources(item):
+    assert "version" in item, "'version' key should be present in zoo config {}".format(
+        item._get_full_key("")
+    )
+    assert (
+        "resources" in item
+    ), "'resources' key should be present in zoo config {}".format(
+        item._get_full_key("")
+    )
+
+    return item.version, item.resources
+
 
 class Configuration:
     def __init__(self, args=None, default_only=False):
