@@ -6,14 +6,14 @@ import random
 import typing
 
 import torch
-from src.common.registry import registry
-from src.utils.build import build_config, build_trainer
-from src.utils.configuration import Configuration
-from src.utils.distributed import distributed_init, get_rank, infer_init_method
-from src.utils.env import set_seed, setup_imports
-from src.utils.flags import flags
-from src.utils.general import log_device_names
-from src.utils.logger import setup_logger, setup_very_basic_config
+from mmf.common.registry import registry
+from mmf.utils.build import build_config, build_trainer
+from mmf.utils.configuration import Configuration
+from mmf.utils.distributed import distributed_init, get_rank, infer_init_method
+from mmf.utils.env import set_seed, setup_imports
+from mmf.utils.flags import flags
+from mmf.utils.general import log_device_names
+from mmf.utils.logger import setup_logger, setup_very_basic_config
 
 
 setup_very_basic_config()

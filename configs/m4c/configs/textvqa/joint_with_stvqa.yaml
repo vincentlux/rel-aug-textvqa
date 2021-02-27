@@ -18,3 +18,4 @@ dataset_config:
       train:
       - textvqa/defaults/annotations/imdb_train_ocr_en.npy
       - stvqa/defaults/annotations/imdb_subtrain.npy
+

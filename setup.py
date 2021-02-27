@@ -87,7 +87,7 @@ def fetch_package_data():
     current_dir = os.getcwd()
     mmf_folder = os.path.dirname(os.path.abspath(__file__))
     # The files for package data need to be relative to mmf package dir
-    os.chdir(os.path.join(mmf_folder, "src"))
+    os.chdir(os.path.join(mmf_folder, "mmf"))
     data_files = fetch_files_from_folder("projects")
     data_files += fetch_files_from_folder("tools")
     data_files += fetch_files_from_folder("configs")
@@ -111,7 +111,7 @@ EXCLUDES = ("data", "docs", "tests", "tests.*", "tools", "tools.*")
 CMD_CLASS = {"build_ext": build_ext}
 EXT_MODULES = [
     Extension(
-        "src.utils.phoc.cphoc", sources=["src/utils/phoc/src/cphoc.c"], language="c"
+        "mmf.utils.phoc.cphoc", sources=["mmf/utils/phoc/src/cphoc.c"], language="c"
     )
 ]
 
@@ -131,12 +131,12 @@ if __name__ == "__main__":
         name=DISTNAME,
         install_requires=REQUIREMENTS,
         include_package_data=True,
-        package_data={"src": fetch_package_data()},
+        package_data={"mmf": fetch_package_data()},
         packages=setuptools.find_packages(exclude=EXCLUDES),
         python_requires=">=3.6",
         ext_modules=EXT_MODULES,
         cmdclass=CMD_CLASS,
-        version=find_version("src", "version.py"),
+        version=find_version("mmf", "version.py"),
         description=DESCRIPTION,
         long_description=LONG_DESCRIPTION,
         long_description_content_type=LONG_DESCRIPTION_CONTENT_TYPE,
