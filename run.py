@@ -20,6 +20,7 @@ setup_very_basic_config()
 
 
 def main(configuration, init_distributed=False, predict=False):
+    print('IN MAIN')
     # A reload might be needed for imports
     setup_imports()
     configuration.import_user_dir()
@@ -57,6 +58,7 @@ def main(configuration, init_distributed=False, predict=False):
 
 
 def distributed_main(device_id, configuration, predict=False):
+    print('IN DISTRIBUTED MAIN')
     config = configuration.get_config()
     config.device_id = device_id
 
