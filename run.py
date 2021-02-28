@@ -86,11 +86,6 @@ def run(opts: typing.Optional[typing.List[str]] = None, predict: bool = False):
     if opts is None:
         parser = flags.get_parser()
         args = parser.parse_args()
-        args.opts = [
-            'config={}'.format(args.config),
-            'datasets={}'.format(args.datasets),
-            'model={}'.format(args.model),
-            'run_type={}'.format(args.run_type)]
     else:
         args = argparse.Namespace(config_override=None)
         args.opts = opts
