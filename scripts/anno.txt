@@ -1,0 +1,5 @@
+{"question_id": 34984, "image_id": "b907e08fbf0e6897", "answer": "unanswerable", "pred_source": ["VOCAB"]}
+{"question_id": 36942, "image_id": "00458395ec2ae964", "answer": "2", "pred_source": ["VOCAB"]}
+{"question_id": 37890, "image_id": "af67237a4a504a29", "answer": "9", "pred_source": ["VOCAB"]}
+{"question_id": 36598, "image_id": "eff8b3f84f897a32", "answer": "storm chasers", "pred_source": ["VOCAB", "VOCAB"]}
+{"question_id": 36527, "image_id": "9c00cebcedf73d93", "answer": "san diego", "pred_source": ["VOCAB", "VOCAB"]}

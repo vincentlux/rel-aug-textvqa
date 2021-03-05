@@ -5,6 +5,7 @@ logs/
 logs
 save/
 snap/
+scripts/const.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
