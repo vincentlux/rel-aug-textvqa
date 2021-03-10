@@ -13,9 +13,6 @@ dataset_config:
     features:
       train:
       - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
-      - stvqa/defaults/features/detectron.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
     annotations:
       train:
       - textvqa/defaults/annotations/imdb_train_ocr_en.npy
-      - stvqa/defaults/annotations/imdb_subtrain.npy
-
