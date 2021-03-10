@@ -12,6 +12,11 @@ class BatchCollator:
         # and type set if it is already not a sample list
         # (case of batched iterators)
         sample_list = batch
+        # debug_ocr_coord = [batch[i]['ocr_bbox_coordinates'].shape for i in range(len(batch))]
+        # import pdb;pdb.set_trace()
+        # debug = {i: batch[0][i].shape for i in batch[0].keys()}
+        # print(debug)
+
         if (
             # Check if batch is a list before checking batch[0]
             # or len as sometimes batch is already SampleList

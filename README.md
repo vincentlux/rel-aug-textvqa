@@ -22,6 +22,18 @@ val:
 python run.py config=configs/m4c/configs/textvqa/joint_with_stvqa.yaml datasets=textvqa model=m4c run_type=val  env.save_dir=./snap checkpoint.resume=True checkpoint.resume_best=True evaluation.predict=True
 ```
 
+
+---
+
+# Run m4c+azure ocr (no stvqa)
+
+```
+train:
+python run.py config=configs/m4c/configs/textvqa/defaults_azure.yaml datasets=textvqa model=m4c run_type=train
+
+```
+
+
 ---
 
 # Check prediction results
