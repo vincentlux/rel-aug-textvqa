@@ -155,6 +155,7 @@ class PaddedFasterRCNNFeatureReader:
         return image_info
 
     def read(self, image_feat_path):
+        # import pdb; pdb.set_trace()
         image_info = self._load(image_feat_path)
         if self.first:
             self.first = False
@@ -222,6 +223,7 @@ class LMDBFeatureReader(PaddedFasterRCNNFeatureReader):
             }
 
     def _load(self, image_file_path):
+        import pdb; pdb.set_trace()
         if self.env is None:
             self._init_db()
 
