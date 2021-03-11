@@ -27,6 +27,18 @@ python run.py config=configs/m4c/configs/textvqa/joint_with_stvqa.yaml datasets=
 
 # Run m4c+azure ocr (no stvqa)
 
+1. download dataset
+
+a. put azure ocr [train npy](https://vincent-research.s3.amazonaws.com/2021-rel-aug-textvqa/data/data/datasets/textvqa/defaults/annotations/imdb_train_ocr_azure.npy) and [val npy](https://vincent-research.s3.amazonaws.com/2021-rel-aug-textvqa/data/data/datasets/textvqa/defaults/annotations/imdb_val_ocr_azure.npy) into 
+
+```
+data/data/datasets/textvqa/defaults/annotations/
+```
+
+b. put azure frcnn 
+
+
+
 ```
 train:
 python run.py config=configs/m4c/configs/textvqa/defaults_azure.yaml datasets=textvqa model=m4c run_type=train

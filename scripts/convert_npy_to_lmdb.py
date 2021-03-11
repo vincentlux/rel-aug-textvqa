@@ -22,7 +22,7 @@ if __name__ == '__main__':
     # load npy file to get filename
     train_npy_path = 'data/data/datasets/textvqa/defaults/annotations/imdb_train_ocr_azure.npy'
     val_npy_path = 'data/data/datasets/textvqa/defaults/annotations/imdb_val_ocr_azure.npy'
-    base_feat_path = 'data/data/datasets/textvqa/ocr_azure/features/azure_textvqa_ocr_frcn_features/'
+    base_feat_path = 'data/data/datasets/textvqa/ocr_azure/features/ocr_azure_frcn_features/'
     save_lmdb_name = 'data/data/datasets/textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb'
     train_info = np.load(train_npy_path, allow_pickle=True)[1:]
     val_info = np.load(val_npy_path, allow_pickle=True)[1:]
