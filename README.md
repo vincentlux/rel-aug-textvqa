@@ -35,9 +35,13 @@ a. put azure ocr [train npy](https://vincent-research.s3.amazonaws.com/2021-rel-
 data/data/datasets/textvqa/defaults/annotations/
 ```
 
-b. put azure frcnn 
+b. put azure ocr [frcnn feature]() into 
 
+```
+data/data/datasets/textvqa/ocr_azure/features/
+```
 
+2. start training
 
 ```
 train:
