@@ -35,16 +35,18 @@ a. put azure ocr [train npy](https://vincent-research.s3.amazonaws.com/2021-rel-
 data/data/datasets/textvqa/defaults/annotations/
 ```
 
-b. put azure ocr [frcnn feature]() into 
+b. put azure ocr [frcnn feature](https://vincent-research.s3.amazonaws.com/2021-rel-aug-textvqa/data/data/datasets/textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb.tar.gz) into 
 
 ```
 data/data/datasets/textvqa/ocr_azure/features/
 ```
 
+then `tar -xzvf ocr_azure_frcn_features.lmdb.tar.gz` 
+
+
 2. start training
 
 ```
-train:
 python run.py config=configs/m4c/configs/textvqa/defaults_azure.yaml datasets=textvqa model=m4c run_type=train
 
 ```
