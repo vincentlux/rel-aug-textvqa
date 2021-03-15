@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 
 def dict_to_lmdb(out_path, dict_to_save):
-    env = lmdb.open(out_path, map_size=1099511627776, writemap=True)
+    env = lmdb.open(out_path, map_size=9995116270, writemap=True)
     with env.begin(write=True) as txn:
         keys = []
         for i, (k, v) in enumerate(dict_to_save.items()):
@@ -20,10 +20,12 @@ def dict_to_lmdb(out_path, dict_to_save):
 
 if __name__ == '__main__':
     # load npy file to get filename
-    train_npy_path = 'data/data/datasets/textvqa/defaults/annotations/imdb_train_ocr_azure.npy'
-    val_npy_path = 'data/data/datasets/textvqa/defaults/annotations/imdb_val_ocr_azure.npy'
-    base_feat_path = 'data/data/datasets/textvqa/ocr_azure/features/ocr_azure_frcn_features/'
-    save_lmdb_name = 'data/data/datasets/textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb'
+    file_path = "/bos/tmp6/zhenfan/VQA/data/TextVQA/OCR/AzureOCR/"
+    train_npy_path = f"{file_path}imdb_train_ocr_azure.npy"
+    val_npy_path = f"{file_path}imdb_val_ocr_azure.npy"
+    base_feat_path = f"{file_path}train_images_ocr_frcnn/"
+    save_lmdb_name = f"{file_path}ocr_azure_frcn_features.lmdb"
+    
     train_info = np.load(train_npy_path, allow_pickle=True)[1:]
     val_info = np.load(val_npy_path, allow_pickle=True)[1:]
     # get all filename needed and extract filename.npy features to lmdb
