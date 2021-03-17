@@ -5,6 +5,7 @@ dataset_config:
   textvqa:
     use_images: false
     use_features: true
+    max_features: 100
     zoo_requirements:
     - textvqa.defaults
     - textvqa.ocr_en
@@ -20,3 +21,6 @@ dataset_config:
       - textvqa/defaults/annotations/imdb_train_ocr_azure.npy
       val:
       - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+
+training:
+  num_workers: 0

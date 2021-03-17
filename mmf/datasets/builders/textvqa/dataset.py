@@ -83,6 +83,7 @@ class TextVQADataset(MMFDataset):
         return predictions
 
     def __getitem__(self, idx):
+        # import pdb; pdb.set_trace()
         sample_info = self.annotation_db[idx]
         sample_info = self.preprocess_sample_info(sample_info)
         current_sample = Sample()
@@ -97,6 +98,7 @@ class TextVQADataset(MMFDataset):
         else:
             current_sample.image_id = sample_info["image_id"]
         if self._use_features is True:
+            # image_xx_0: obj frcnn feat; image_xx_1: ocr frcnn feat
             features = self.features_db[idx]
             current_sample.update(features)
 
