@@ -92,5 +92,6 @@ training:
     early_stop:
       criteria: textvqa/textvqa_accuracy
       minimize: false
-    tensorboard: true
+    tensorboard: false
+    mlflow: true
 

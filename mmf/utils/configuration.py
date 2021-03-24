@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import collections
-import datetime
+from datetime import datetime
 import json
 import logging
 import os
@@ -13,9 +13,10 @@ from mmf.common.registry import registry
 from mmf.utils.env import import_user_module
 from mmf.utils.file_io import PathManager
 from mmf.utils.general import get_absolute_path, get_mmf_root
+from mmf.utils.distributed import is_master
 from omegaconf import OmegaConf
 
-
+curr_time = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 logger = logging.getLogger(__name__)
 
 
@@ -200,17 +201,6 @@ def resolve_dir(env_variable, default="data"):
     return dir_path
 
 
-def resolve_unique_dir(root_dir="snap"):
-    import pdb; pdb.set_trace()
-    unique_time = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    dir_path = os.path.join(root_dir, unique_time)
-    # dir_path = os.getenv(env_variable, default_dir)
-
-    if not PathManager.exists(dir_path):
-        PathManager.mkdirs(dir_path)
-
-    return dir_path
-
 class Configuration:
     def __init__(self, args=None, default_only=False):
         self.config = {}
@@ -381,7 +371,6 @@ class Configuration:
         OmegaConf.register_resolver("device_count", lambda: device_count)
         OmegaConf.register_resolver("resolve_cache_dir", resolve_cache_dir)
         OmegaConf.register_resolver("resolve_dir", resolve_dir)
-        OmegaConf.register_resolver("resolve_unique_dir", resolve_unique_dir)
 
     def _merge_with_dotlist(self, config, opts):
         # TODO: To remove technical debt, a possible solution is to use
@@ -550,6 +539,12 @@ class Configuration:
                 + "Switching to CPU version."
             )
             config.training.device = "cpu"
+
+        # update save dir with unique time
+        dir_path = os.path.join(config.env.save_dir, curr_time)
+        if not PathManager.exists(dir_path):
+            PathManager.mkdirs(dir_path)
+        config.env.save_dir = dir_path
 
         return config
 

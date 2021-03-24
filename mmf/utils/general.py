@@ -6,6 +6,8 @@ import logging
 import math
 import os
 import warnings
+import yaml
+import numpy as np
 from bisect import bisect
 
 import torch
@@ -190,6 +192,42 @@ def dict_to_string(dictionary):
         logs.append(f"{key}: {val:.4f}")
 
     return ", ".join(logs)
+
+
+def yaml_to_json(yaml_file):
+    return yaml.load(yaml_file)
+
+
+def flatten_json(json_file):
+    out = {}
+
+    def flatten(x, name=''):
+        if type(x) is dict:
+            for a in x:
+                flatten(x[a], name + a + '.')
+        elif type(x) is list:
+            i = 0
+            for a in x:
+                flatten(a, name + str(i) + '.')
+                i += 1
+        else:
+            out[name[:-1]] = x
+
+    flatten(json_file)
+    return out
+
+
+def convert_to_float(value):
+    if isinstance(value, float):
+        return value
+    try:  # try pytorch
+        return value.item()
+    except:
+        try:  # try numpy
+            print(value.dtype)
+            return np.asscalar(value)
+        except:
+            raise ValueError('do not know how to convert this number {} to float'.format(value))
 
 
 def get_overlap_score(candidate, target):

@@ -6,7 +6,7 @@ import torch
 from mmf.trainers.callbacks.base import Callback
 from mmf.utils.configuration import get_mmf_env
 from mmf.utils.distributed import is_master
-from mmf.utils.logger import TensorboardLogger, log_progress, setup_output_folder
+from mmf.utils.logger import TensorboardLogger, MlflowLogger, log_progress, setup_output_folder
 from mmf.utils.timer import Timer
 
 
@@ -25,7 +25,6 @@ class LogisticsCallback(Callback):
             trainer(Type[BaseTrainer]): Trainer object
         """
         super().__init__(config, trainer)
-
         self.total_timer = Timer()
         self.log_interval = self.training_config.log_interval
         self.evaluation_interval = self.training_config.evaluation_interval
@@ -44,6 +43,8 @@ class LogisticsCallback(Callback):
                 log_dir = env_tb_logdir
 
             self.tb_writer = TensorboardLogger(log_dir, self.trainer.current_iteration)
+        if self.training_config.mlflow:
+            self.tb_writer = MlflowLogger(config, self.trainer.current_iteration)
 
     def on_train_start(self):
         self.train_timer = Timer()
