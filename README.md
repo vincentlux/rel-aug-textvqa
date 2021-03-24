@@ -51,6 +51,12 @@ python run.py config=configs/m4c/configs/textvqa/defaults_azure.yaml datasets=te
 
 ```
 
+# Track experiment results and params
+Run mlflow under current directory:
+```
+mlflow server --host 0.0.0.0:5000
+```
+
 
 ---
 
