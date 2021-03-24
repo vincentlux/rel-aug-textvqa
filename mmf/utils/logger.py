@@ -9,7 +9,7 @@ import sys
 from typing import Any, Dict, Union
 
 from mmf.common.registry import registry
-from mmf.utils.configuration import get_mmf_env
+from mmf.utils.configuration import get_global_config, get_mmf_env
 from mmf.utils.distributed import get_rank, is_master
 from mmf.utils.file_io import PathManager
 from mmf.utils.timer import Timer
@@ -249,6 +249,56 @@ class ColorfulFormatter(logging.Formatter):
         else:
             return log
         return prefix + " " + log
+
+
+class MlflowLogger:
+    def __init__(self, log_folder="./logs", iteration=0):
+        # This would handle warning of missing tensorboard
+        import mlflow
+
+        self.summary_writer = None
+        self._is_master = is_master()
+        self.timer = Timer()
+        self.log_folder = log_folder
+        self.time_format = "%Y-%m-%dT%H:%M:%S"
+
+        if self._is_master:
+            current_time = self.timer.get_time_hhmmss(None, format=self.time_format)
+            tensorboard_folder = os.path.join(
+                self.log_folder, f"tensorboard_{current_time}"
+            )
+            self.summary_writer = SummaryWriter(tensorboard_folder)
+
+    def __del__(self):
+        if getattr(self, "summary_writer", None) is not None:
+            self.summary_writer.close()
+
+    def _should_log_tensorboard(self):
+        if self.summary_writer is None or not self._is_master:
+            return False
+        else:
+            return True
+
+    def add_scalar(self, key, value, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        self.summary_writer.add_scalar(key, value, iteration)
+
+    def add_scalars(self, scalar_dict, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        for key, val in scalar_dict.items():
+            self.summary_writer.add_scalar(key, val, iteration)
+
+    def add_histogram_for_model(self, model, iteration):
+        if not self._should_log_tensorboard():
+            return
+
+        for name, param in model.named_parameters():
+            np_param = param.clone().cpu().data.numpy()
+            self.summary_writer.add_histogram(name, np_param, iteration)
 
 
 class TensorboardLogger:
