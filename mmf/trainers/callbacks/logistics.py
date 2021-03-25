@@ -109,7 +109,7 @@ class LogisticsCallback(Callback):
         if not is_master():
             return
 
-        if self.training_config.tensorboard:
+        if self.training_config.tensorboard or self.training_config.mlflow:
             scalar_dict = meter.get_scalar_dict()
             self.tb_writer.add_scalars(scalar_dict, self.trainer.current_iteration)
 
