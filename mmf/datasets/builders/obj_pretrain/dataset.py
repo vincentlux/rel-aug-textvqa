@@ -222,6 +222,6 @@ class ObjPretrainDataset(MMFDataset):
         sample.answers = object_to_byte_tensor(answers)
         # pass index
         if isinstance(processed_answers["answers"], int):
-            sample.targets = processed_answers["answers"]
+            sample.targets = torch.tensor(processed_answers["answers"])
 
         return sample
