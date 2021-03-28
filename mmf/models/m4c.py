@@ -200,6 +200,7 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
+        
         # OCR FastText feature (300-dim)
         ocr_fasttext = sample_list.context_feature_0
         ocr_fasttext = F.normalize(ocr_fasttext, dim=-1)
