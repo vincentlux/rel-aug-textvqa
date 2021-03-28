@@ -224,12 +224,12 @@ class M4CPretrain(BaseModel):
         dataset = datasets.split(",")[0]
         config_mock = OmegaConf.create({"datasets": datasets})
         registry.register("config", config_mock)
-        registry.register(
-            f"{dataset}_num_final_outputs",
-            # Need to add as it is subtracted
-            checkpoint["classifier.module.weight"].size(0)
-            + config.classifier.ocr_max_num,
-        )
+        # registry.register(
+        #     f"{dataset}_num_final_outputs",
+        #     # Need to add as it is subtracted
+        #     checkpoint["classifier.module.weight"].size(0)
+        #     + config.classifier.ocr_max_num,
+        # )
         # Fix this later, when processor pipeline is available
         answer_processor = OmegaConf.create({"BOS_IDX": 1})
         registry.register(f"{dataset}_answer_processor", answer_processor)

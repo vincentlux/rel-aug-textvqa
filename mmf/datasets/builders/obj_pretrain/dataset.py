@@ -169,7 +169,8 @@ class ObjPretrainDataset(MMFDataset):
                 for token in sample_info["ocr_tokens"]
             ]
         else:
-            ocr_tokens = sample_info["ocr_tokens"]
+            if "ocr_tokens" in sample_info:
+                ocr_tokens = sample_info["ocr_tokens"]
         # Get FastText embeddings for OCR tokens
         if hasattr(self, "context_processor"):
             context = self.context_processor({"tokens": ocr_tokens})
@@ -216,19 +217,11 @@ class ObjPretrainDataset(MMFDataset):
         answers = sample_info.get("answers", [])
         answer_processor_arg = {"answers": answers}
 
-        answer_processor_arg["tokens"] = sample.pop("ocr_tokens", [])
-
         processed_answers = self.answer_processor(answer_processor_arg)
-
-        assert not self.config.fast_read, (
-            "In TextVQADataset, online OCR sampling is incompatible "
-            "with fast_read, so fast_read is currently not supported."
-        )
-
         sample.update(processed_answers)
         sample.answers = object_to_byte_tensor(answers)
-
-        if "answers_scores" in sample:
-            sample.targets = sample.pop("answers_scores")
+        # pass index
+        if isinstance(processed_answers["answers"], int):
+            sample.targets = processed_answers["answers"]
 
         return sample

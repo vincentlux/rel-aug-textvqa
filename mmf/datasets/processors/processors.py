@@ -1379,86 +1379,16 @@ class M4CAnswerProcessor(BaseProcessor):
 
 @registry.register_processor("m4c_obj_pretrain_answer")
 class M4CObjPretrainAnswerProcessor(BaseProcessor):
-    """
-    Process a VisualGenome
-    """
 
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
 
     def __call__(self, item):
+        # TODO: what is needed here?
         answers = item["answers"]
-
-        if not answers:
-            return {
-                "sampled_idx_seq": None,
-                "train_prev_inds": torch.zeros(self.max_copy_steps, dtype=torch.long),
-            }
-
-        answers = [self.answer_preprocessor({"text": a})["text"] for a in answers]
-        assert len(answers) == self.num_answers
-
-        # Step 1: calculate the soft score of ground-truth answers
-        unique_answer2score = self.compute_answer_scores(answers)
-
-        # Step 2: fill the first step soft scores for tokens
-        scores = torch.zeros(
-            self.max_copy_steps, self.get_vocab_size(), dtype=torch.float
-        )
-
-        # match answers to fixed vocabularies and OCR tokens.
-        ocr2inds_dict = defaultdict(list)
-        for idx, token in enumerate(item["tokens"]):
-            ocr2inds_dict[token].append(idx)
-        answer_dec_inds = [
-            self.match_answer_to_vocab_ocr_seq(
-                a, self.answer_vocab.word2idx_dict, ocr2inds_dict
-            )
-            for a in answers
-        ]
-
-        # Collect all the valid decoding sequences for each answer.
-        # This part (idx_seq_list) was pre-computed in imdb (instead of online)
-        # to save time
-        all_idx_seq_list = []
-        for answer, idx_seq_list in zip(answers, answer_dec_inds):
-            all_idx_seq_list.extend(idx_seq_list)
-            # fill in the soft score for the first decoding step
-            score = unique_answer2score[answer]
-            for idx_seq in idx_seq_list:
-                score_idx = idx_seq[0]
-                # the scores for the decoding Step 0 will be the maximum
-                # among all answers starting with that vocab
-                # for example:
-                # if "red apple" has score 0.7 and "red flag" has score 0.8
-                # the score for "red" at Step 0 will be max(0.7, 0.8) = 0.8
-                scores[0, score_idx] = max(scores[0, score_idx], score)
-
-        # train_prev_inds is the previous prediction indices in auto-regressive
-        # decoding
-        train_prev_inds = torch.zeros(self.max_copy_steps, dtype=torch.long)
-        # train_loss_mask records the decoding steps where losses are applied
-        train_loss_mask = torch.zeros(self.max_copy_steps, dtype=torch.float)
-        if len(all_idx_seq_list) > 0:
-            # sample a random decoding answer sequence for teacher-forcing
-            idx_seq = all_idx_seq_list[np.random.choice(len(all_idx_seq_list))]
-            dec_step_num = min(1 + len(idx_seq), self.max_copy_steps)
-            train_loss_mask[:dec_step_num] = 1.0
-
-            train_prev_inds[0] = self.BOS_IDX
-            for t in range(1, dec_step_num):
-                train_prev_inds[t] = idx_seq[t - 1]
-                score_idx = idx_seq[t] if t < len(idx_seq) else self.EOS_IDX
-                scores[t, score_idx] = 1.0
-        else:
-            idx_seq = ()
 
         answer_info = {
             "answers": answers,
-            "answers_scores": scores,
-            "sampled_idx_seq": idx_seq,
-            "train_prev_inds": train_prev_inds,
-            "train_loss_mask": train_loss_mask,
         }
         return answer_info
 
