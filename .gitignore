@@ -6,6 +6,7 @@ logs
 save/
 snap/
 scripts/const.py
+*.sh
 
 mlruns/
 
