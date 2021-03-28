@@ -90,6 +90,7 @@ class FeatureReader:
             if not self.base_path.endswith(".lmdb") and self.ndim is None:
                 feat = load_feat(image_feat_path)
                 self.ndim = feat.ndim
+            # import pdb; pdb.set_trace()
             self._init_reader()
 
         return self.feat_reader.read(image_feat_path)
@@ -145,6 +146,7 @@ class PaddedFasterRCNNFeatureReader:
         self.take_item = False
 
     def _load(self, image_feat_path):
+        # import pdb; pdb.set_trace()
         image_info = {}
         image_info["features"] = load_feat(image_feat_path)
 
@@ -155,6 +157,7 @@ class PaddedFasterRCNNFeatureReader:
         return image_info
 
     def read(self, image_feat_path):
+        # import pdb; pdb.set_trace()
         image_info = self._load(image_feat_path)
         if self.first:
             self.first = False
@@ -239,7 +242,7 @@ class LMDBFeatureReader(PaddedFasterRCNNFeatureReader):
 
         with self.env.begin(write=False, buffers=True) as txn:
             image_info = pickle.loads(txn.get(self.image_ids[img_id_idx]))
-
+        # import pdb; pdb.set_trace()
         return image_info
 
 
