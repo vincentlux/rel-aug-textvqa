@@ -109,14 +109,10 @@ class M4C(BaseModel):
         self.obj_drop = nn.Dropout(self.config.obj.dropout_prob)
 
     def _build_ocr_encoding(self):
-        self.remove_ocr_fasttext = getattr(
-            self.config.ocr, "remove_ocr_fasttext", False
-        )
+        self.ocr_text_embedding = getattr(self.config.ocr, "text_embedding", "fasttext")
         self.remove_ocr_phoc = getattr(self.config.ocr, "remove_ocr_phoc", False)
         self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
-        self.remove_ocr_semantics = getattr(
-            self.config.ocr, "remove_ocr_semantics", False
-        )
+        self.remove_ocr_semantics = getattr(self.config.ocr, "remove_ocr_semantics", False)
         self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)
 
         # OCR appearance feature: Faster R-CNN
