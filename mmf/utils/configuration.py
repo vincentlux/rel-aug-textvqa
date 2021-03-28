@@ -541,10 +541,11 @@ class Configuration:
             config.training.device = "cpu"
 
         # update save dir with unique time
-        dir_path = os.path.join(config.env.save_dir, curr_time)
-        if not PathManager.exists(dir_path):
-            PathManager.mkdirs(dir_path)
-        config.env.save_dir = dir_path
+        if config.run_type == 'train':
+            dir_path = os.path.join(config.env.save_dir, curr_time)
+            if not PathManager.exists(dir_path):
+                PathManager.mkdirs(dir_path)
+            config.env.save_dir = dir_path
 
         return config
 

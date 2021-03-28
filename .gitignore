@@ -9,6 +9,8 @@ scripts/const.py
 scripts/*.txt
 
 
+./snap
+
 mlruns/
 
 # Byte-compiled / optimized / DLL files
