@@ -17,6 +17,9 @@ dataset_config:
       - vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent.npy
       val:
       - vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent.npy
+      test:
+      - vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent.npy
+
     processors:
       text_processor:
         type: bert_tokenizer

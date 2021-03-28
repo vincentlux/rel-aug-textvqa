@@ -31,7 +31,7 @@ class M4CPretrain(BaseModel):
 
     @classmethod
     def config_path(cls):
-        return "configs/models/m4c/defaults.yaml"
+        return "configs/models/m4c_pretrain/defaults.yaml"
 
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
@@ -40,7 +40,7 @@ class M4CPretrain(BaseModel):
         # split model building into several components
         self._build_txt_encoding()
         self._build_obj_encoding()
-        self._build_ocr_encoding()
+        # self._build_ocr_encoding()
         self._build_mmt()
         self._build_output()
 

@@ -13,7 +13,7 @@ class ObjPretrainBuilder(MMFDatasetBuilder):
 
     @classmethod
     def config_path(cls):
-        return "configs/datasets/textvqa/defaults.yaml"
+        return "configs/datasets/obj_pretrain/defaults.yaml"
 
     # TODO: Deprecate this method and move configuration updates directly to processors
     def update_registry_for_model(self, config):

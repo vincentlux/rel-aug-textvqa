@@ -15,7 +15,6 @@ class ObjPretrainDataset(MMFDataset):
 
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
-        # NOTE, TODO: Code duplication w.r.t to STVQA, revisit
         # during dataset refactor to support variable dataset classes
         if "stvqa" in path:
             feature_path = sample_info["feature_path"]
