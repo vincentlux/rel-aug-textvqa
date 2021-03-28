@@ -173,14 +173,15 @@ class TextVQADataset(MMFDataset):
         else:
             ocr_tokens = sample_info["ocr_tokens"]
         # Get FastText embeddings for OCR tokens
-        context = self.context_processor({"tokens": ocr_tokens})
-        sample.context = context["text"]
-        sample.ocr_tokens = context["tokens"]
+        if hasattr(self, "context_processor"):
+            context = self.context_processor({"tokens": ocr_tokens})
+            sample.context = context["text"]
+            sample.ocr_tokens = context["tokens"]
 
-        sample.context_tokens = object_to_byte_tensor(context["tokens"])
-        sample.context_feature_0 = context["text"]
-        sample.context_info_0 = Sample()
-        sample.context_info_0.max_features = context["length"]
+            sample.context_tokens = object_to_byte_tensor(context["tokens"])
+            sample.context_feature_0 = context["text"]
+            sample.context_info_0 = Sample()
+            sample.context_info_0.max_features = context["length"]
 
         # Get PHOC embeddings for OCR tokens
         if hasattr(self, "phoc_processor"):
