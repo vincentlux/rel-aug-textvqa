@@ -31,7 +31,7 @@ class M4CPretrain(BaseModel):
 
     @classmethod
     def config_path(cls):
-        return "configs/models/m4c/defaults_pretrain.yaml"
+        return "configs/models/m4c/defaults.yaml"
 
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)

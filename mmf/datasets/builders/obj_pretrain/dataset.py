@@ -7,9 +7,9 @@ from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
 from mmf.utils.text import word_tokenize
 
 
-class TextVQADataset(MMFDataset):
+class ObjPretrainDataset(MMFDataset):
     def __init__(self, config, dataset_type, imdb_file_index, *args, **kwargs):
-        super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
+        super().__init__("obj_pretrain", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
 

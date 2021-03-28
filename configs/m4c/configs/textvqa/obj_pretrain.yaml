@@ -1,20 +1,14 @@
 model_config:
-  m4c:
+  m4c_pretrain:
     losses:
-#    - type: m4c_decoding_bce_with_mask
     - type: cross_entropy
 
 dataset_config:
-  textvqa:
-    zoo_requirements:
-    - textvqa.defaults
-    - textvqa.ocr_en
+  obj_pretrain:
     features:
       train:
       - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
-#      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       val:
-#      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
       test:
       - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
@@ -33,7 +27,7 @@ dataset_config:
               do_lower_case: true
           max_seq_length: 20
       answer_processor:
-        type: m4c_pretrain
+        type: m4c_obj_pretrain_answer
         params:
           max_bbox: 15
       copy_processor:
