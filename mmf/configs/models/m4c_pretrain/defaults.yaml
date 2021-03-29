@@ -24,4 +24,4 @@ model_config:
       params: {}
     model_data_dir: ${env.data_dir}
     losses:
-    - type: m4c_decoding_bce_with_mask
+    - type: cross_entropy

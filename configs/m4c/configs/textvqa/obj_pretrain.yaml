@@ -72,9 +72,6 @@ training:
     batch_size: 128
     num_workers: 0
     task_size_proportional_sampling: true
-    early_stop:
-      criteria: textvqa/textvqa_accuracy
-      minimize: false
     tensorboard: false
     mlflow: true
 
