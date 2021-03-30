@@ -1377,6 +1377,22 @@ class M4CAnswerProcessor(BaseProcessor):
         }
         return answer_info
 
+@registry.register_processor("m4c_obj_pretrain_answer")
+class M4CObjPretrainAnswerProcessor(BaseProcessor):
+
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+
+    def __call__(self, item):
+        # TODO: what is needed here?
+        answers = item["answers"]
+
+        answer_info = {
+            "answers": answers,
+        }
+        return answer_info
+
+
 
 @registry.register_processor("m4c_caption")
 class M4CCaptionProcessor(M4CAnswerProcessor):

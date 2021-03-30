@@ -201,7 +201,6 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
-<<<<<<< Updated upstream
         if self.config.ocr.text_embedding == "fasttext":
             # OCR FastText feature (300-dim)
             ocr_textemb = sample_list.context_feature_0
@@ -229,12 +228,6 @@ class M4C(BaseModel):
             ocr_textemb = torch.zeros_like(ocr_fasttext)
         else:
             raise NotImplementedError
-=======
-        # OCR FastText feature (300-dim)
-        ocr_fasttext = sample_list.context_feature_0
-        ocr_fasttext = F.normalize(ocr_fasttext, dim=-1)
-        assert ocr_fasttext.size(-1) == 300
->>>>>>> Stashed changes
 
         # OCR PHOC feature (604-dim)
         ocr_phoc = sample_list.context_feature_1

@@ -1,0 +1,8 @@
+includes:
+- ./defaults_azure.yaml
+checkpoint:
+  resume: true
+  resume_best: false
+  resume_pretrained: true
+  reset:
+    all: true
