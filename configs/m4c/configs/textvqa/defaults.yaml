@@ -86,13 +86,8 @@ training:
     warmup_factor: 0.2
     warmup_iterations: 1000
     max_updates: 24000
-<<<<<<< HEAD
     batch_size: 32
     num_workers: 1
-=======
-    batch_size: 128
-    num_workers: 0
->>>>>>> ab4b2b42d54b6f40acfda4646054f56ae5d4bea1
     task_size_proportional_sampling: true
     early_stop:
       criteria: textvqa/textvqa_accuracy

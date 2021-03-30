@@ -109,6 +109,7 @@ class M4C(BaseModel):
         self.obj_drop = nn.Dropout(self.config.obj.dropout_prob)
 
     def _build_ocr_encoding(self):
+        print(self.config.ocr)
         self.ocr_text_embedding = getattr(self.config.ocr, "text_embedding", "fasttext")
         self.remove_ocr_phoc = getattr(self.config.ocr, "remove_ocr_phoc", False)
         self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
@@ -200,11 +201,33 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
-        
-        # OCR FastText feature (300-dim)
-        ocr_fasttext = sample_list.context_feature_0
-        ocr_fasttext = F.normalize(ocr_fasttext, dim=-1)
-        assert ocr_fasttext.size(-1) == 300
+        if self.config.ocr.text_embedding == "fasttext":
+            # OCR FastText feature (300-dim)
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_textemb, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+        elif self.config.ocr.text_embedding == "bert":
+            
+            fwd_results["ocr_token_inds"] = sample_list.bert_context 
+            # binary mask of valid text (question words) vs padding
+            fwd_results["ocr_token_mask"] = sample_list.bert_input_mask
+            ocr_rawtextemb = self.text_bert(
+                txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"]
+            )
+            s = ocr_rawtextemb.shape
+            m = 50
+            ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
+            for i in range(s[0]):
+                map_ls = sample_list.token_map[i][:m]
+                ocr_textemb[i,:len(map_ls)]=ocr_rawtextemb[i][map_ls]
+                
+        elif self.config.ocr.text_embedding == "notext":
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_fasttext, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+            ocr_textemb = torch.zeros_like(ocr_fasttext)
+        else:
+            raise NotImplementedError
 
         # OCR PHOC feature (604-dim)
         ocr_phoc = sample_list.context_feature_1
@@ -212,22 +235,21 @@ class M4C(BaseModel):
         assert ocr_phoc.size(-1) == 604
 
         # OCR appearance feature: Faster R-CNN fc7
-        ocr_fc6 = sample_list.image_feature_1[:, : ocr_fasttext.size(1), :]
+        ocr_fc6 = sample_list.image_feature_1[:, : ocr_textemb.size(1), :]
         ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
         ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
 
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
-        # TODO remove OCR order vectors; they are not needed
-        ocr_order_vectors = torch.zeros_like(sample_list.order_vectors)
+        # ZHEN: have removed
+        # TODO: remove OCR order vectors; they are not needed
+        #ocr_order_vectors = torch.zeros_like(sample_list.order_vectors)
 
-        if self.remove_ocr_fasttext:
-            ocr_fasttext = torch.zeros_like(ocr_fasttext)
         if self.remove_ocr_phoc:
             ocr_phoc = torch.zeros_like(ocr_phoc)
         if self.remove_ocr_frcn:
             ocr_fc7 = torch.zeros_like(ocr_fc7)
         ocr_feat = torch.cat(
-            [ocr_fasttext, ocr_phoc, ocr_fc7, ocr_order_vectors], dim=-1
+            [ocr_textemb, ocr_phoc, ocr_fc7], dim=-1
         )
         ocr_bbox = sample_list.ocr_bbox_coordinates
         if self.remove_ocr_semantics:
@@ -250,7 +272,6 @@ class M4C(BaseModel):
             txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
         )
         fwd_results["txt_emb"] = self.text_bert_out_linear(text_bert_out)
-
         mmt_results = self.mmt(
             txt_emb=fwd_results["txt_emb"],
             txt_mask=fwd_results["txt_mask"],

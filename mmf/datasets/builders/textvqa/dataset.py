@@ -172,15 +172,45 @@ class TextVQADataset(MMFDataset):
             ]
         else:
             ocr_tokens = sample_info["ocr_tokens"]
-        # Get FastText embeddings for OCR tokens
-        context = self.context_processor({"tokens": ocr_tokens})
-        sample.context = context["text"]
-        sample.ocr_tokens = context["tokens"]
-
-        sample.context_tokens = object_to_byte_tensor(context["tokens"])
-        sample.context_feature_0 = context["text"]
-        sample.context_info_0 = Sample()
-        sample.context_info_0.max_features = context["length"]
+        # Get FastText or bert embeddings for OCR tokens
+        # TO CHANGE!!!!!!!
+        ocr_tokens = ocr_tokens[:self.config.processors.bbox_processor.params.max_length]
+        if self.config.processors.context_processor.type == "fasttext":
+            context = self.context_processor({"tokens": ocr_tokens})
+            sample.context = context["text"]
+            sample.ocr_tokens = context["tokens"]
+            #print(sample.ocr_tokens)
+            #raise NotImplementedError
+            sample.context_tokens = object_to_byte_tensor(context["tokens"])
+            sample.context_feature_0 = context["text"]
+            sample.context_info_0 = Sample()
+            sample.context_info_0.max_features = context["length"]
+        elif self.config.processors.context_processor.type == "bert_tokenizer":
+            context_processor_args = {}
+            context_processor_args["text"] = " ".join(ocr_tokens)
+            context_processor_args["tokens"] = ocr_tokens
+            processed_context = self.context_processor(context_processor_args)
+            sample.ocr_tokens = ocr_tokens
+            sample.context_tokens = object_to_byte_tensor(ocr_tokens)
+            sample.context_info_0 = Sample()
+            sample.context_info_0.max_features = torch.tensor(len(ocr_tokens))
+            sample.bert_context = processed_context["input_ids"]
+            sample.bert_tokens = processed_context["tokens"]
+            sample.bert_input_mask = processed_context["input_mask"]
+            sample.token_map = []
+            cnt = 0; ptr = 1
+            while(cnt<len(ocr_tokens)):
+                sample.token_map.append(ptr)
+                tgt_token = ocr_tokens[cnt]
+                processed_token = self.context_processor.tokenize(tgt_token)
+                ptr += len(processed_token)
+                if ptr>= sample.bert_input_mask.shape[0]:
+                    break
+                cnt+=1
+            #while(len(sample.token_map)<len(ocr_tokens)):
+            #    sample.token_map.append(-1)
+        else:
+            raise NotImplementedError
 
         # Get PHOC embeddings for OCR tokens
         if hasattr(self, "phoc_processor"):
@@ -188,14 +218,14 @@ class TextVQADataset(MMFDataset):
             sample.context_feature_1 = context_phoc["text"]
             sample.context_info_1 = Sample()
             sample.context_info_1.max_features = context_phoc["length"]
-
-        # OCR order vectors
+        # OCR order vectors (ZHEN: removed)
+        '''
         if self.config.get("use_order_vectors", False):
             order_vectors = np.eye(len(sample.ocr_tokens), dtype=np.float32)
             order_vectors = torch.from_numpy(order_vectors)
             order_vectors[context["length"] :] = 0
             sample.order_vectors = order_vectors
-
+        '''
         # OCR bounding box information
         if "ocr_normalized_boxes" in sample_info and hasattr(self, "copy_processor"):
             # New imdb format: OCR bounding boxes are already pre-computed
