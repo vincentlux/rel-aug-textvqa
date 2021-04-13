@@ -2,6 +2,7 @@
 import functools
 import logging
 import math
+import copy
 
 import torch
 import torch.nn.functional as F
@@ -17,7 +18,6 @@ from transformers.modeling_bert import (
     BertEncoder,
     BertPreTrainedModel,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +109,11 @@ class M4C(BaseModel):
         self.obj_drop = nn.Dropout(self.config.obj.dropout_prob)
 
     def _build_ocr_encoding(self):
-        self.remove_ocr_fasttext = getattr(
-            self.config.ocr, "remove_ocr_fasttext", False
-        )
+        print(self.config.ocr)
+        self.ocr_text_embedding = getattr(self.config.ocr, "text_embedding", "fasttext")
         self.remove_ocr_phoc = getattr(self.config.ocr, "remove_ocr_phoc", False)
         self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
-        self.remove_ocr_semantics = getattr(
-            self.config.ocr, "remove_ocr_semantics", False
-        )
+        self.remove_ocr_semantics = getattr(self.config.ocr, "remove_ocr_semantics", False)
         self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)
 
         # OCR appearance feature: Faster R-CNN
@@ -165,6 +162,7 @@ class M4C(BaseModel):
         self.answer_processor = registry.get(self._datasets[0] + "_answer_processor")
 
     def forward(self, sample_list):
+        #print("In model m4c forward, sample_list:\n", sample_list.keys())
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
         fwd_results = {}
@@ -204,10 +202,33 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
-        # OCR FastText feature (300-dim)
-        ocr_fasttext = sample_list.context_feature_0
-        ocr_fasttext = F.normalize(ocr_fasttext, dim=-1)
-        assert ocr_fasttext.size(-1) == 300
+        if self.config.ocr.text_embedding == "fasttext":
+            # OCR FastText feature (300-dim)
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_textemb, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+        elif self.config.ocr.text_embedding == "bert":
+
+            fwd_results["ocr_token_inds"] = sample_list.bert_context
+            # binary mask of valid text (question words) vs padding
+            fwd_results["ocr_token_mask"] = sample_list.bert_input_mask
+            ocr_rawtextemb = self.text_bert(
+                txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"]
+            )
+            s = ocr_rawtextemb.shape
+            m = 50
+            ocr_textemb = torch.zeros((s[0], m, s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
+            for i in range(s[0]):
+                map_ls = sample_list.token_map[i][:m]
+                ocr_textemb[i, :len(map_ls)] = ocr_rawtextemb[i][map_ls]
+
+        elif self.config.ocr.text_embedding == "notext":
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_fasttext, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+            ocr_textemb = torch.zeros_like(ocr_fasttext)
+        else:
+            raise NotImplementedError
 
         # OCR PHOC feature (604-dim)
         ocr_phoc = sample_list.context_feature_1
@@ -215,22 +236,21 @@ class M4C(BaseModel):
         assert ocr_phoc.size(-1) == 604
 
         # OCR appearance feature: Faster R-CNN fc7
-        ocr_fc6 = sample_list.image_feature_1[:, : ocr_fasttext.size(1), :]
+        ocr_fc6 = sample_list.image_feature_1[:, : ocr_textemb.size(1), :]
         ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
         ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
 
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
-        # TODO remove OCR order vectors; they are not needed
-        ocr_order_vectors = torch.zeros_like(sample_list.order_vectors)
+        # ZHEN: have removed
+        # TODO: remove OCR order vectors; they are not needed
+        # ocr_order_vectors = torch.zeros_like(sample_list.order_vectors)
 
-        if self.remove_ocr_fasttext:
-            ocr_fasttext = torch.zeros_like(ocr_fasttext)
         if self.remove_ocr_phoc:
             ocr_phoc = torch.zeros_like(ocr_phoc)
         if self.remove_ocr_frcn:
             ocr_fc7 = torch.zeros_like(ocr_fc7)
         ocr_feat = torch.cat(
-            [ocr_fasttext, ocr_phoc, ocr_fc7, ocr_order_vectors], dim=-1
+            [ocr_textemb, ocr_phoc, ocr_fc7], dim=-1
         )
         ocr_bbox = sample_list.ocr_bbox_coordinates
         if self.remove_ocr_semantics:
@@ -253,7 +273,6 @@ class M4C(BaseModel):
             txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
         )
         fwd_results["txt_emb"] = self.text_bert_out_linear(text_bert_out)
-
         mmt_results = self.mmt(
             txt_emb=fwd_results["txt_emb"],
             txt_mask=fwd_results["txt_mask"],
@@ -283,20 +302,106 @@ class M4C(BaseModel):
             self._forward_output(sample_list, fwd_results)
         else:
             dec_step_num = sample_list.train_prev_inds.size(1)
-            # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
+            # print(self.config.beam_size)
             fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds)
             fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
+            if self.config.beam_size == 1:
+                # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
 
-            # greedy decoding at test time
-            for _ in range(dec_step_num):
-                self._forward_mmt(sample_list, fwd_results)
-                self._forward_output(sample_list, fwd_results)
+                # greedy decoding at test time
+                for _ in range(dec_step_num):
+                    self._forward_mmt(sample_list, fwd_results)
+                    self._forward_output(sample_list, fwd_results)
 
-                # find the highest scoring output (either a fixed vocab
-                # or an OCR), and add it to prev_inds for auto-regressive
-                # decoding
-                argmax_inds = fwd_results["scores"].argmax(dim=-1)
-                fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+                    # find the highest scoring output (either a fixed vocab
+                    # or an OCR), and add it to prev_inds for auto-regressive
+                    # decoding
+                    argmax_inds = fwd_results["scores"].argmax(dim=-1)
+                    fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+            else:
+                batch_size = sample_list.train_prev_inds.size(0)
+                fwd_results["scores"] = None
+                for sample_id in range(batch_size):
+                    fwd_results_feed = copy.deepcopy(fwd_results)
+                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][sample_id: sample_id + 1, :]
+                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"][sample_id: sample_id + 1, :]
+                    sample_list_feed = sample_list
+                    self._forward_mmt(sample_list_feed, fwd_results_feed)
+                    self._forward_output(sample_list_feed, fwd_results_feed)
+                    top_k_value, top_k_inds = \
+                        F.log_softmax(fwd_results_feed["scores"][:, 0, :], dim=-1) \
+                            .topk(self.config.beam_size)
+                    dead = 0
+                    seq2keep = fwd_results_feed["prev_inds"][0:1, :1]  # beam_size * decoded
+                    seqprob = torch.zeros_like(seq2keep[:, 0]).to(torch.float)  # beam_size
+                    cand_score = []
+                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"].repeat(self.config.beam_size, 1)
+                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"].repeat(self.config.beam_size, 1)
+                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"].repeat(self.config.beam_size, 1)
+                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"].repeat(self.config.beam_size, 1)
+                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"].repeat(self.config.beam_size, 1)
+                    cand = torch.ones_like(fwd_results_feed["prev_inds"]) * 2
+                    allow_size = self.config.beam_size
+                    for dec_step in range(dec_step_num):
+                        seqprob = seqprob.unsqueeze(-1).repeat(1, allow_size).view(-1)
+                        seqprob += top_k_value.view(-1)  # (beam_size * beam_size)
+                        dec_len = seq2keep.size(1)
+                        seq2keep = seq2keep.repeat(1, allow_size).view(-1, dec_len)
+                        # (beam_size * beam_size) * dec_len
+                        seq2keep = torch.cat([seq2keep, top_k_inds.view(-1, 1)], -1)
+                        beam_k_score, beam_k_inds = seqprob.topk(allow_size)
+                        seq2keep = seq2keep[beam_k_inds]
+                        seqprob = seqprob[beam_k_inds]
+                        nextbatch = torch.zeros_like(fwd_results_feed["prev_inds"])
+                        filled = 0
+                        new_seqprob = seqprob[seqprob.size(0):]
+                        new_seq2keep = seq2keep[seq2keep.size(0):]
+                        for i, seq in enumerate(seq2keep):
+                            if seq[-1] == self.answer_processor.EOS_IDX or dec_step == dec_step_num - 1:
+                                nextbatch = nextbatch[:nextbatch.size(0) - 1]
+                                cand[dead, :seq.size(0)-1] = seq[1:]
+                                cand_score.append(seqprob[i].item() / (seq.size(0) ** self.config.beam_length_penalty))
+                                dead += 1
+                            else:
+                                nextbatch[filled, :seq.size(0)] = seq
+                                new_seqprob = torch.cat([new_seqprob, seqprob[i:i+1]], 0)
+                                new_seq2keep = torch.cat([new_seq2keep, seq2keep[i:i+1]], 0)
+                                filled += 1
+                        assert dead + nextbatch.size(0) == self.config.beam_size
+                        if dead == self.config.beam_size:
+                            break
+                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][:nextbatch.size(0)]
+                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][:nextbatch.size(0)]
+                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][:nextbatch.size(0)]
+                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][:nextbatch.size(0)]
+                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][:nextbatch.size(0)]
+                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][:nextbatch.size(0)]
+                        fwd_results_feed["prev_inds"] = nextbatch
+                        seq2keep = new_seq2keep
+                        seqprob = new_seqprob
+                        allow_size = self.config.beam_size - dead
+                        self._forward_mmt(sample_list_feed, fwd_results_feed)
+                        self._forward_output(sample_list_feed, fwd_results_feed)
+                        top_k_value, top_k_inds = \
+                            F.log_softmax(fwd_results_feed["scores"][:, dec_step + 1, :], dim=-1) \
+                                .topk(allow_size)
+                    idx = torch.argmax(torch.tensor(cand_score))
+                    fwd_results["prev_inds"][sample_id, :] = cand[idx][:]
+                    scores = torch.zeros_like(fwd_results_feed["scores"][0:1])
+                    for i, word_id in enumerate(cand[idx].view(-1)):
+                        scores[0, i, word_id] = 1.
+                    if fwd_results["scores"] is None:
+                        fwd_results["scores"] = scores
+                    else:
+                        fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
+
 
     def get_optimizer_parameters(self, config):
         optimizer_param_groups = []
@@ -376,17 +481,16 @@ class MMT(BertPreTrainedModel):
         self.init_weights()
 
     def forward(
-        self,
-        txt_emb,
-        txt_mask,
-        obj_emb,
-        obj_mask,
-        ocr_emb,
-        ocr_mask,
-        fixed_ans_emb,
-        prev_inds,
+            self,
+            txt_emb,
+            txt_mask,
+            obj_emb,
+            obj_mask,
+            ocr_emb,
+            ocr_mask,
+            fixed_ans_emb,
+            prev_inds,
     ):
-
         # build embeddings for predictions in previous decoding steps
         # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
         dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)

@@ -6,7 +6,8 @@ logs
 save/
 snap/
 scripts/const.py
-
+*.sh
+scripts/*.txt
 ./snap
 snap
 
