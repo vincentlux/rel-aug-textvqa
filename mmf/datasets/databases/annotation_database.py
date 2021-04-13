@@ -4,9 +4,10 @@ import json
 
 import numpy as np
 import torch
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from mmf.utils.file_io import PathManager
 from mmf.utils.general import get_absolute_path
+from mmf.common.registry import registry
 
 
 class AnnotationDatabase(torch.utils.data.Dataset):
@@ -21,8 +22,13 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         self.metadata = {}
         self.config = config
         self.start_idx = 0
-        path = get_absolute_path(path)
-        self.load_annotation_db(path)
+        paths = []
+        for s in path.split(","):
+            paths.append(get_absolute_path(s))
+        self.load_file_num = 0
+        self.load_annotation_db(paths)
+        print("in __init__ of annotation_database\n", self.load_file_num)
+        print(self.data[1].keys())
         self.post_processing()
 
     def post_processing(self):
@@ -31,17 +37,22 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         if self.config.post_processing.type == 'expand_annotation':
             self._expand_annotation()
 
-    def load_annotation_db(self, path):
-        if path.find("visdial") != -1 or path.find("visual_dialog") != -1:
-            self._load_visual_dialog(path)
-        elif path.endswith(".npy"):
-            self._load_npy(path)
-        elif path.endswith(".jsonl"):
-            self._load_jsonl(path)
-        elif path.endswith(".json"):
-            self._load_json(path)
-        else:
-            raise ValueError("Unknown file format for annotation db")
+    def load_annotation_db(self, paths):
+        print(paths)
+        for path in paths:
+            if path.find("visdial") != -1 or path.find("visual_dialog") != -1:
+                self._load_visual_dialog(path)
+            elif path.endswith(".npy"):
+                if self.load_file_num == 0:
+                    self._load_npy(path)
+                else:
+                    self._append_npy(path)
+            elif path.endswith(".jsonl"):
+                self._load_jsonl(path)
+            elif path.endswith(".json"):
+                self._load_json(path)
+            else:
+                raise ValueError("Unknown file format for annotation db")
 
 
     def _expand_annotation(self):
@@ -76,9 +87,9 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             self.start_idx = 0
 
     def _load_npy(self, path):
+        print(f"Loading annotations from {path}...")
         with PathManager.open(path, "rb") as f:
             self.db = np.load(f, allow_pickle=True)
-
         self.start_idx = 0
 
         if type(self.db) == dict:
@@ -92,8 +103,42 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             if "image_id" not in self.data[0]:
                 self.start_idx = 1
 
+        for i in trange(self.start_idx, len(self.data)):
+            self.data[i][f"ocr_info_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_info"])
+            self.data[i][f"ocr_tokens_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_tokens"])
+            self.data[i][f"ocr_normalized_boxes_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_normalized_boxes"])
+
+            self.data[i].pop("ocr_info")
+            self.data[i].pop("ocr_tokens")
+            self.data[i].pop("ocr_normalized_boxes")
+
         if len(self.data) == 0:
             self.data = self.db
+        self.load_file_num = 1
+
+    def _append_npy(self, path):
+        print(f"Appending annotations from {path}...")
+        with PathManager.open(path, "rb") as f:
+            new_db = np.load(f, allow_pickle=True)
+        new_start_idx = 0
+        if type(new_db) == dict:
+            new_data = new_db.get("data", [])
+        else:
+            new_data = new_db
+            if "image_id" not in self.data[0]:
+                new_start_idx = 1
+
+        print(len(new_data))
+
+        id2idx = {self.data[i]["question"]+self.data[i]["image_id"]: i for i in range(self.start_idx, len(self.data))}
+
+        for i in trange(new_start_idx, len(new_data)):
+            idx = id2idx[new_data[i]["question"]+new_data[i]["image_id"]]
+            self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
+            self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
+            self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]
+
+        self.load_file_num += 1
 
     def _load_json(self, path):
         with PathManager.open(path, "r") as f:

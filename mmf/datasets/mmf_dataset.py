@@ -36,12 +36,14 @@ class MMFDataset(BaseDataset):
         annotation_path = self._get_path_based_on_index(
             self.config, "annotations", self._index
         )
+        print(annotation_path)
         return AnnotationDatabase(self.config, annotation_path)
 
     def build_features_db(self):
         features_path = self._get_path_based_on_index(
             self.config, "features", self._index
         )
+        print(features_path)
         return FeaturesDatabase(
             self.config, features_path, annotation_db=self.annotation_db
         )
@@ -61,7 +63,6 @@ class MMFDataset(BaseDataset):
             or len(config.get(self.dataset_type, [])) == 0
         ):
             raise ValueError(f"No {attribute} present for type {self.dataset_type}")
-
         paths = config[self.dataset_type]
 
         if isinstance(paths, str):

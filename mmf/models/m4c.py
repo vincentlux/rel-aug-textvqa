@@ -162,6 +162,7 @@ class M4C(BaseModel):
         self.answer_processor = registry.get(self._datasets[0] + "_answer_processor")
 
     def forward(self, sample_list):
+        #print("In model m4c forward, sample_list:\n", sample_list.keys())
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
         fwd_results = {}
