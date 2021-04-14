@@ -1,8 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+import copy
 import json
 
 import numpy as np
 import torch
+from tqdm import tqdm
 from mmf.utils.file_io import PathManager
 from mmf.utils.general import get_absolute_path
 
@@ -21,6 +23,13 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         self.start_idx = 0
         path = get_absolute_path(path)
         self.load_annotation_db(path)
+        self.post_processing()
+
+    def post_processing(self):
+        if 'post_processing' not in self.config:
+            return
+        if self.config.post_processing.type == 'expand_annotation':
+            self._expand_annotation()
 
     def load_annotation_db(self, path):
         if path.find("visdial") != -1 or path.find("visual_dialog") != -1:
@@ -33,6 +42,30 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             self._load_json(path)
         else:
             raise ValueError("Unknown file format for annotation db")
+
+
+    def _expand_annotation(self):
+        # expand descriptions (each description becomes one example of self.data)
+        print('Start expanding annotation')
+        new_data = []
+        for d in tqdm(self.data):
+            d.pop('all_normalized_boxes')
+            d.pop('index_needed')
+            new_d = copy.deepcopy(d)
+            for idx, desc in enumerate(d['descriptions']):
+                question = desc['txt']
+                question_id = desc['question_id']
+                new_desc = copy.copy(new_d)
+                new_desc['question'] = question
+                new_desc['question_id'] = question_id
+                new_desc['answers'] = idx
+                new_desc['image_id'] = new_desc['feature_path']
+                new_desc.pop('descriptions')
+                new_data.append(new_desc)
+        print(f'original data size: {len(self.data)} postprocessed data size: {len(new_data)}')
+        self.data = new_data
+
+
 
     def _load_jsonl(self, path):
         with PathManager.open(path, "r") as f:
@@ -92,7 +125,7 @@ class AnnotationDatabase(torch.utils.data.Dataset):
                 data["answers"] = data["valid_answers"]
 
         # TODO: Clean up VizWiz IMDB from copy tokens
-        if "answers" in data and data["answers"][-1] == "<copy>":
+        if "answers" in data and not isinstance(data["answers"], int) and data["answers"][-1] == "<copy>":
             data["answers"] = data["answers"][:-1]
 
         return data

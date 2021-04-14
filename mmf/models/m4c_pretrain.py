@@ -31,7 +31,7 @@ class M4CPretrain(BaseModel):
 
     @classmethod
     def config_path(cls):
-        return "configs/models/m4c/defaults_pretrain.yaml"
+        return "configs/models/m4c_pretrain/defaults.yaml"
 
     def build(self):
         # modules requiring custom learning rates (usually for finetuning)
@@ -40,7 +40,7 @@ class M4CPretrain(BaseModel):
         # split model building into several components
         self._build_txt_encoding()
         self._build_obj_encoding()
-        self._build_ocr_encoding()
+        # self._build_ocr_encoding()
         self._build_mmt()
         self._build_output()
 
@@ -224,12 +224,12 @@ class M4CPretrain(BaseModel):
         dataset = datasets.split(",")[0]
         config_mock = OmegaConf.create({"datasets": datasets})
         registry.register("config", config_mock)
-        registry.register(
-            f"{dataset}_num_final_outputs",
-            # Need to add as it is subtracted
-            checkpoint["classifier.module.weight"].size(0)
-            + config.classifier.ocr_max_num,
-        )
+        # registry.register(
+        #     f"{dataset}_num_final_outputs",
+        #     # Need to add as it is subtracted
+        #     checkpoint["classifier.module.weight"].size(0)
+        #     + config.classifier.ocr_max_num,
+        # )
         # Fix this later, when processor pipeline is available
         answer_processor = OmegaConf.create({"BOS_IDX": 1})
         registry.register(f"{dataset}_answer_processor", answer_processor)

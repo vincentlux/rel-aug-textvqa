@@ -1,0 +1,79 @@
+model_config:
+  m4c_pretrain:
+    losses:
+    - type: cross_entropy
+
+dataset_config:
+  obj_pretrain:
+    features:
+      train:
+      - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      val:
+      - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      test:
+      - vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+    annotations:
+      train:
+      - vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent.npy
+      val:
+      - vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent.npy
+      test:
+      - vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent.npy
+
+    processors:
+      text_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 20
+      answer_processor:
+        type: m4c_obj_pretrain_answer
+      copy_processor:
+        type: copy
+        params:
+          max_length: 50
+      bbox_processor:
+        type: bbox
+        params:
+          max_length: 50
+    return_features_info: true
+    use_ocr: false
+    use_ocr_info: false
+    use_order_vectors: true
+    max_features: 50
+
+optimizer:
+  params:
+    eps: 1.0e-08
+    lr: 1e-4
+    weight_decay: 0
+  type: Adam
+
+evaluation:
+  metrics:
+  - accuracy
+
+training:
+    clip_norm_mode: all
+    clip_gradients: true
+    max_grad_l2_norm: 0.25
+    lr_scheduler: true
+    lr_steps:
+    - 14000
+    - 19000
+    lr_ratio: 0.1
+    use_warmup: true
+    warmup_factor: 0.2
+    warmup_iterations: 1000
+    max_updates: 24000
+    batch_size: 128
+    num_workers: 0
+    task_size_proportional_sampling: true
+    tensorboard: false
+    mlflow: true
+
+checkpoint:
+  max_to_keep: 5
