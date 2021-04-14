@@ -167,6 +167,7 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
         for idx in trange(new_start_idx, len(new_data)):
             # TODO: change parts other than ocr_xxx
+            pass
             # self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
             # self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
             # self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]

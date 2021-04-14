@@ -22,7 +22,7 @@ dataset_config:
       - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
     annotations:
       train:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent_v1.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
       val:
       - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
       test:
