@@ -41,6 +41,7 @@ class M4C(BaseModel):
         self._build_txt_encoding()
         self._build_obj_encoding()
         self._build_ocr_encoding()
+        #self._build_ocrtxt_encoding()
         self._build_mmt()
         self._build_output()
 
@@ -87,6 +88,37 @@ class M4C(BaseModel):
             )
         else:
             self.text_bert_out_linear = nn.Identity()
+    
+    def _build_ocrtxt_encoding(self):
+        TEXT_BERT_HIDDEN_SIZE = 768
+
+        self.ocrtext_bert_config = BertConfig(**self.config.text_bert)
+        if self.config.text_bert_init_from_bert_base:
+            self.ocrtext_bert = TextBert.from_pretrained(
+                "bert-base-uncased", config=self.ocrtext_bert_config
+            )
+            # Use a smaller learning rate on text bert when initializing
+            # from BERT_BASE
+            self.finetune_modules.append(
+                {"module": self.ocrtext_bert, "lr_scale": self.config.lr_scale_text_bert}
+            )
+        else:
+            logger.info("NOT initializing text_bert from BERT_BASE")
+            self.ocrtext_bert = TextBert(self.ocrtext_bert_config)
+
+        # if the text bert output dimension doesn't match the
+        # multimodal transformer (mmt) hidden dimension,
+        # add a linear projection layer between the two
+        if self.mmt_config.hidden_size != TEXT_BERT_HIDDEN_SIZE:
+            logger.info(
+                f"Projecting text_bert output to {self.mmt_config.hidden_size} dim"
+            )
+
+            self.ocrtext_bert_out_linear = nn.Linear(
+                TEXT_BERT_HIDDEN_SIZE, self.mmt_config.hidden_size
+            )
+        else:
+            self.ocrtext_bert_out_linear = nn.Identity()
 
     def _build_obj_encoding(self):
         # object appearance feature: Faster R-CNN
@@ -113,6 +145,7 @@ class M4C(BaseModel):
         self.ocr_text_embedding = getattr(self.config.ocr, "text_embedding", "fasttext")
         self.remove_ocr_phoc = getattr(self.config.ocr, "remove_ocr_phoc", False)
         self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
+        self.remove_ocr_posemb = getattr(self.config.ocr, "remove_ocr_posemb", True)
         self.remove_ocr_semantics = getattr(self.config.ocr, "remove_ocr_semantics", False)
         self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)
 
@@ -211,9 +244,9 @@ class M4C(BaseModel):
             fwd_results["ocr_token_inds"] = sample_list.bert_context 
             # binary mask of valid text (question words) vs padding
             fwd_results["ocr_token_mask"] = sample_list.bert_input_mask
-            ocr_rawtextemb = self.text_bert(
-                txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"]
-            )
+            
+            ocr_rawtextemb = self.text_bert(txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"])
+            #ocr_rawtextemb = self.ocrtext_bert(txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"])
             s = ocr_rawtextemb.shape
             m = 50
             ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
@@ -242,7 +275,7 @@ class M4C(BaseModel):
         # OCR order vectors (legacy from LoRRA model; set to all zeros)
         # ZHEN: have removed
         # TODO: remove OCR order vectors; they are not needed
-        #ocr_order_vectors = torch.zeros_like(sample_list.order_vectors)
+        
 
         if self.remove_ocr_phoc:
             ocr_phoc = torch.zeros_like(ocr_phoc)
@@ -251,6 +284,11 @@ class M4C(BaseModel):
         ocr_feat = torch.cat(
             [ocr_textemb, ocr_phoc, ocr_fc7], dim=-1
         )
+        if not self.remove_ocr_posemb:
+            ocr_feat = torch.cat(
+                [ocr_feat,sample_list.ocr_pos_emb], dim=-1
+            )
+
         ocr_bbox = sample_list.ocr_bbox_coordinates
         if self.remove_ocr_semantics:
             ocr_feat = torch.zeros_like(ocr_feat)

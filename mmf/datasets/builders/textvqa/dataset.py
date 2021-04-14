@@ -5,13 +5,17 @@ from mmf.common.sample import Sample
 from mmf.datasets.mmf_dataset import MMFDataset
 from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
 from mmf.utils.text import word_tokenize
-
+from mmf.utils.pos_emb import pos_emb_calculator
 
 class TextVQADataset(MMFDataset):
     def __init__(self, config, dataset_type, imdb_file_index, *args, **kwargs):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
+        self.pos_emb_calculator = pos_emb_calculator( 
+            Dim=self.config.get("pos_emb_length",20),
+            L=self.config.processors.bbox_processor.params.max_length
+        )
 
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
@@ -173,8 +177,9 @@ class TextVQADataset(MMFDataset):
         else:
             ocr_tokens = sample_info["ocr_tokens"]
         # Get FastText or bert embeddings for OCR tokens
-        # TO CHANGE!!!!!!!
-        ocr_tokens = ocr_tokens[:self.config.processors.bbox_processor.params.max_length]
+        max_len = self.config.processors.answer_processor.params.max_length
+        ocr_tokens = ocr_tokens[:max_len]
+        ocr_info = sample_info["ocr_info"][:max_len]
         if self.config.processors.context_processor.type == "fasttext":
             context = self.context_processor({"tokens": ocr_tokens})
             sample.context = context["text"]
@@ -218,28 +223,37 @@ class TextVQADataset(MMFDataset):
             sample.context_feature_1 = context_phoc["text"]
             sample.context_info_1 = Sample()
             sample.context_info_1.max_features = context_phoc["length"]
-        # OCR order vectors (ZHEN: removed)
-        '''
-        if self.config.get("use_order_vectors", False):
-            order_vectors = np.eye(len(sample.ocr_tokens), dtype=np.float32)
-            order_vectors = torch.from_numpy(order_vectors)
-            order_vectors[context["length"] :] = 0
-            sample.order_vectors = order_vectors
-        '''
+        
+        # OCR token hierarchy vectors (ZHEN: changed)
+        if self.config.get("use_ocr_word_position", False):
+            if len(ocr_info)==0:
+                vec_arr = np.zeros((0,60),dtype=np.int) # TODO: Magic Number 60
+            else:
+                # To change: fix keystr
+                tmp_keystr = "position" if "position" in ocr_info[0].keys() else "additional_properties" 
+                word_pos_arr = np.array([x[tmp_keystr] for x in ocr_info]).reshape(len(ocr_info),-1)
+                l,n = word_pos_arr.shape
+                vec_arr = np.zeros((len(sample.ocr_tokens),n),dtype=np.int)-1
+                vec_arr[:l,:] = word_pos_arr
+                vec_arr = self.pos_emb_calculator.calc(vec_arr).reshape(l,-1)
+            sample.ocr_pos_emb = self.copy_processor(
+                {"blob": vec_arr}
+            )["blob"][:max_len]
         # OCR bounding box information
         if "ocr_normalized_boxes" in sample_info and hasattr(self, "copy_processor"):
             # New imdb format: OCR bounding boxes are already pre-computed
-            max_len = self.config.processors.answer_processor.params.max_length
             sample.ocr_bbox_coordinates = self.copy_processor(
                 {"blob": sample_info["ocr_normalized_boxes"]}
             )["blob"][:max_len]
         elif self.use_ocr_info and "ocr_info" in sample_info:
             # Old imdb format: OCR bounding boxes are computed on-the-fly
             # from ocr_info
+            raise NotImplementedError # Zhen: Not checked
+            '''
             sample.ocr_bbox_coordinates = self.bbox_processor(
                 {"info": sample_info["ocr_info"]}
             )["bbox"].coordinates
-
+            '''
         return sample
 
     def add_answer_info(self, sample_info, sample):
