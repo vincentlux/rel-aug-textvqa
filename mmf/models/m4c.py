@@ -28,6 +28,8 @@ class M4C(BaseModel):
         super().__init__(config)
         self.mmt_config = BertConfig(**self.config.mmt)
         self._datasets = registry.get("config").datasets.split(",")
+        # add joint_train to combine obj_pretrain
+        self.joint_train = registry.get("joint_train")
 
     @classmethod
     def config_path(cls):
@@ -161,8 +163,29 @@ class M4C(BaseModel):
 
         self.answer_processor = registry.get(self._datasets[0] + "_answer_processor")
 
+        if self.joint_train:
+            self.scorer = ClassifierLayer(
+                self.config.classifier.type,
+                in_dim=self.mmt_config.hidden_size,
+                out_dim=1,
+                **self.config.classifier.params,
+            )
+
+    def _configure_joint_train(self):
+        if not self.joint_train:
+            return
+        current_epoch_mode = registry.get('current_epoch_mode')
+        assert current_epoch_mode in ['obj_pretrain', 'textvqa']
+        self.current_epoch_mode = current_epoch_mode if not hasattr(self, current_epoch_mode) else self.current_epoch_mode
+        if current_epoch_mode != self.current_epoch_mode:
+            logger.info(f"Set current ep mode from {self.current_epoch_mode} to {current_epoch_mode}")
+            self.current_epoch_mode = current_epoch_mode
+
+
     def forward(self, sample_list):
-        #print("In model m4c forward, sample_list:\n", sample_list.keys())
+        print("In model m4c forward, sample_list:\n", sample_list.keys())
+        # set current_epoch_mode
+        self._configure_joint_train()
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
         fwd_results = {}
@@ -202,6 +225,10 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
+        # pass ocr encoding when doing obj pretraining
+        if self.joint_train and self.current_epoch_mode == 'obj_pretrain':
+            return
+
         if self.config.ocr.text_embedding == "fasttext":
             # OCR FastText feature (300-dim)
             ocr_textemb = sample_list.context_feature_0
@@ -295,112 +322,139 @@ class M4C(BaseModel):
         scores = torch.cat([fixed_scores, dynamic_ocr_scores], dim=-1)
         fwd_results["scores"] = scores
 
+    def _forward_obj_pretrain_mmt_and_output(self, sample_list, fwd_results):
+        # forward mmt
+        # first forward the text BERT layers
+        text_bert_out = self.text_bert(
+            txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
+        )
+        fwd_results["txt_emb"] = self.text_bert_out_linear(text_bert_out)
+
+        mmt_results = self.mmt(
+            txt_emb=fwd_results["txt_emb"],
+            txt_mask=fwd_results["txt_mask"],
+            obj_emb=fwd_results["obj_mmt_in"],
+            obj_mask=fwd_results["obj_mask"],
+            ocr_emb=None,
+            ocr_mask=None,
+            fixed_ans_emb=None,
+            prev_inds=None,
+        )
+        fwd_results.update(mmt_results)
+        # forward output
+        mmt_obj_output = fwd_results["mmt_obj_output"]
+        scores = self.scorer(mmt_obj_output).squeeze(-1)
+        fwd_results["scores"] = scores
+
     def _forward_mmt_and_output(self, sample_list, fwd_results):
-        if self.training:
-            fwd_results["prev_inds"] = sample_list.train_prev_inds.clone()
-            self._forward_mmt(sample_list, fwd_results)
-            self._forward_output(sample_list, fwd_results)
-        else:
-            dec_step_num = sample_list.train_prev_inds.size(1)
-            # print(self.config.beam_size)
-            fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds)
-            fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
-            if self.config.beam_size == 1:
-                # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
-
-                # greedy decoding at test time
-                for _ in range(dec_step_num):
-                    self._forward_mmt(sample_list, fwd_results)
-                    self._forward_output(sample_list, fwd_results)
-
-                    # find the highest scoring output (either a fixed vocab
-                    # or an OCR), and add it to prev_inds for auto-regressive
-                    # decoding
-                    argmax_inds = fwd_results["scores"].argmax(dim=-1)
-                    fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+        if self.joint_train and self.current_epoch_mode == 'obj_pretrain':
+            self._forward_obj_pretrain_mmt_and_output(sample_list, fwd_results)
+        else:   # textvqa
+            if self.training:
+                fwd_results["prev_inds"] = sample_list.train_prev_inds.clone()
+                self._forward_mmt(sample_list, fwd_results)
+                self._forward_output(sample_list, fwd_results)
             else:
-                batch_size = sample_list.train_prev_inds.size(0)
-                fwd_results["scores"] = None
-                for sample_id in range(batch_size):
-                    fwd_results_feed = copy.deepcopy(fwd_results)
-                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"][sample_id: sample_id + 1, :]
-                    sample_list_feed = sample_list
-                    self._forward_mmt(sample_list_feed, fwd_results_feed)
-                    self._forward_output(sample_list_feed, fwd_results_feed)
-                    top_k_value, top_k_inds = \
-                        F.log_softmax(fwd_results_feed["scores"][:, 0, :], dim=-1) \
-                            .topk(self.config.beam_size)
-                    dead = 0
-                    seq2keep = fwd_results_feed["prev_inds"][0:1, :1]  # beam_size * decoded
-                    seqprob = torch.zeros_like(seq2keep[:, 0]).to(torch.float)  # beam_size
-                    cand_score = []
-                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"].repeat(self.config.beam_size, 1, 1)
-                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"].repeat(self.config.beam_size, 1, 1)
-                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"].repeat(self.config.beam_size, 1)
-                    cand = torch.ones_like(fwd_results_feed["prev_inds"]) * 2
-                    allow_size = self.config.beam_size
-                    for dec_step in range(dec_step_num):
-                        seqprob = seqprob.unsqueeze(-1).repeat(1, allow_size).view(-1)
-                        seqprob += top_k_value.view(-1)  # (beam_size * beam_size)
-                        dec_len = seq2keep.size(1)
-                        seq2keep = seq2keep.repeat(1, allow_size).view(-1, dec_len)
-                        # (beam_size * beam_size) * dec_len
-                        seq2keep = torch.cat([seq2keep, top_k_inds.view(-1, 1)], -1)
-                        beam_k_score, beam_k_inds = seqprob.topk(allow_size)
-                        seq2keep = seq2keep[beam_k_inds]
-                        seqprob = seqprob[beam_k_inds]
-                        nextbatch = torch.zeros_like(fwd_results_feed["prev_inds"])
-                        filled = 0
-                        new_seqprob = seqprob[seqprob.size(0):]
-                        new_seq2keep = seq2keep[seq2keep.size(0):]
-                        for i, seq in enumerate(seq2keep):
-                            if seq[-1] == self.answer_processor.EOS_IDX or dec_step == dec_step_num - 1:
-                                nextbatch = nextbatch[:nextbatch.size(0) - 1]
-                                cand[dead, :seq.size(0)-1] = seq[1:]
-                                cand_score.append(seqprob[i].item() / (seq.size(0) ** self.config.beam_length_penalty))
-                                dead += 1
-                            else:
-                                nextbatch[filled, :seq.size(0)] = seq
-                                new_seqprob = torch.cat([new_seqprob, seqprob[i:i+1]], 0)
-                                new_seq2keep = torch.cat([new_seq2keep, seq2keep[i:i+1]], 0)
-                                filled += 1
-                        assert dead + nextbatch.size(0) == self.config.beam_size
-                        if dead == self.config.beam_size:
-                            break
-                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][:nextbatch.size(0)]
-                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][:nextbatch.size(0)]
-                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][:nextbatch.size(0)]
-                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["prev_inds"] = nextbatch
-                        seq2keep = new_seq2keep
-                        seqprob = new_seqprob
-                        allow_size = self.config.beam_size - dead
+                dec_step_num = sample_list.train_prev_inds.size(1)
+                # print(self.config.beam_size)
+                fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds)
+                fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
+                if self.config.beam_size == 1:
+                    # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
+
+                    # greedy decoding at test time
+                    for _ in range(dec_step_num):
+                        self._forward_mmt(sample_list, fwd_results)
+                        self._forward_output(sample_list, fwd_results)
+
+                        # find the highest scoring output (either a fixed vocab
+                        # or an OCR), and add it to prev_inds for auto-regressive
+                        # decoding
+                        argmax_inds = fwd_results["scores"].argmax(dim=-1)
+                        fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+                else:
+                    batch_size = sample_list.train_prev_inds.size(0)
+                    fwd_results["scores"] = None
+                    for sample_id in range(batch_size):
+                        fwd_results_feed = copy.deepcopy(fwd_results)
+                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"][sample_id: sample_id + 1, :]
+                        sample_list_feed = sample_list
                         self._forward_mmt(sample_list_feed, fwd_results_feed)
                         self._forward_output(sample_list_feed, fwd_results_feed)
                         top_k_value, top_k_inds = \
-                            F.log_softmax(fwd_results_feed["scores"][:, dec_step + 1, :], dim=-1) \
-                                .topk(allow_size)
-                    idx = torch.argmax(torch.tensor(cand_score))
-                    fwd_results["prev_inds"][sample_id, :] = cand[idx][:]
-                    scores = torch.zeros_like(fwd_results_feed["scores"][0:1])
-                    for i, word_id in enumerate(cand[idx].view(-1)):
-                        scores[0, i, word_id] = 1.
-                    if fwd_results["scores"] is None:
-                        fwd_results["scores"] = scores
-                    else:
-                        fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
+                            F.log_softmax(fwd_results_feed["scores"][:, 0, :], dim=-1) \
+                                .topk(self.config.beam_size)
+                        dead = 0
+                        seq2keep = fwd_results_feed["prev_inds"][0:1, :1]  # beam_size * decoded
+                        seqprob = torch.zeros_like(seq2keep[:, 0]).to(torch.float)  # beam_size
+                        cand_score = []
+                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"].repeat(self.config.beam_size, 1)
+                        cand = torch.ones_like(fwd_results_feed["prev_inds"]) * 2
+                        allow_size = self.config.beam_size
+                        for dec_step in range(dec_step_num):
+                            seqprob = seqprob.unsqueeze(-1).repeat(1, allow_size).view(-1)
+                            seqprob += top_k_value.view(-1)  # (beam_size * beam_size)
+                            dec_len = seq2keep.size(1)
+                            seq2keep = seq2keep.repeat(1, allow_size).view(-1, dec_len)
+                            # (beam_size * beam_size) * dec_len
+                            seq2keep = torch.cat([seq2keep, top_k_inds.view(-1, 1)], -1)
+                            beam_k_score, beam_k_inds = seqprob.topk(allow_size)
+                            seq2keep = seq2keep[beam_k_inds]
+                            seqprob = seqprob[beam_k_inds]
+                            nextbatch = torch.zeros_like(fwd_results_feed["prev_inds"])
+                            filled = 0
+                            new_seqprob = seqprob[seqprob.size(0):]
+                            new_seq2keep = seq2keep[seq2keep.size(0):]
+                            for i, seq in enumerate(seq2keep):
+                                if seq[-1] == self.answer_processor.EOS_IDX or dec_step == dec_step_num - 1:
+                                    nextbatch = nextbatch[:nextbatch.size(0) - 1]
+                                    cand[dead, :seq.size(0)-1] = seq[1:]
+                                    cand_score.append(seqprob[i].item() / (seq.size(0) ** self.config.beam_length_penalty))
+                                    dead += 1
+                                else:
+                                    nextbatch[filled, :seq.size(0)] = seq
+                                    new_seqprob = torch.cat([new_seqprob, seqprob[i:i+1]], 0)
+                                    new_seq2keep = torch.cat([new_seq2keep, seq2keep[i:i+1]], 0)
+                                    filled += 1
+                            assert dead + nextbatch.size(0) == self.config.beam_size
+                            if dead == self.config.beam_size:
+                                break
+                            fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][:nextbatch.size(0)]
+                            fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][:nextbatch.size(0)]
+                            fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][:nextbatch.size(0)]
+                            fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["prev_inds"] = nextbatch
+                            seq2keep = new_seq2keep
+                            seqprob = new_seqprob
+                            allow_size = self.config.beam_size - dead
+                            self._forward_mmt(sample_list_feed, fwd_results_feed)
+                            self._forward_output(sample_list_feed, fwd_results_feed)
+                            top_k_value, top_k_inds = \
+                                F.log_softmax(fwd_results_feed["scores"][:, dec_step + 1, :], dim=-1) \
+                                    .topk(allow_size)
+                        idx = torch.argmax(torch.tensor(cand_score))
+                        fwd_results["prev_inds"][sample_id, :] = cand[idx][:]
+                        scores = torch.zeros_like(fwd_results_feed["scores"][0:1])
+                        for i, word_id in enumerate(cand[idx].view(-1)):
+                            scores[0, i, word_id] = 1.
+                        if fwd_results["scores"] is None:
+                            fwd_results["scores"] = scores
+                        else:
+                            fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
 
 
     def get_optimizer_parameters(self, config):
@@ -491,68 +545,103 @@ class MMT(BertPreTrainedModel):
             fixed_ans_emb,
             prev_inds,
     ):
-        # build embeddings for predictions in previous decoding steps
-        # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-        dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
+        if self.joint_train and self.current_epoch_mode == 'obj_pretrain':
+            encoder_inputs = torch.cat([txt_emb, obj_emb], dim=1)
+            attention_mask = torch.cat([txt_mask, obj_mask], dim=1)
 
-        # a zero mask for decoding steps, so the encoding steps elements can't
-        # attend to decoding steps.
-        # A triangular causal mask will be filled for the decoding steps
-        # later in extended_attention_mask
-        dec_mask = torch.zeros(
-            dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
-        )
-        encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb, dec_emb], dim=1)
-        attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask, dec_mask], dim=1)
+            # offsets of each modality in the joint embedding space
+            txt_max_num = txt_mask.size(-1)
+            obj_max_num = obj_mask.size(-1)
+            txt_begin = 0
+            txt_end = txt_begin + txt_max_num
+            obj_begin = txt_end
+            obj_end = obj_begin + obj_max_num
 
-        # offsets of each modality in the joint embedding space
-        txt_max_num = txt_mask.size(-1)
-        obj_max_num = obj_mask.size(-1)
-        ocr_max_num = ocr_mask.size(-1)
-        dec_max_num = dec_mask.size(-1)
-        txt_begin = 0
-        txt_end = txt_begin + txt_max_num
-        ocr_begin = txt_max_num + obj_max_num
-        ocr_end = ocr_begin + ocr_max_num
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
 
-        # We create a 3D attention mask from a 2D tensor mask.
-        # Sizes are [batch_size, 1, from_seq_length, to_seq_length]
-        # So we can broadcast to
-        # [batch_size, num_heads, from_seq_length, to_seq_length]
-        to_seq_length = attention_mask.size(1)
-        from_seq_length = to_seq_length
+            # flip the mask, so that invalid attention pairs have -10000.
+            extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+            assert not extended_attention_mask.requires_grad
+            head_mask = [None] * self.config.num_hidden_layers
 
-        # generate the attention mask similar to prefix LM
-        # all elements can attend to the elements in encoding steps
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = extended_attention_mask.repeat(
-            1, 1, from_seq_length, 1
-        )
-        # decoding step elements can attend to themselves in a causal manner
-        extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
-            dec_max_num, encoder_inputs.device
-        )
+            encoder_outputs = self.encoder(
+                encoder_inputs, extended_attention_mask, head_mask=head_mask
+            )
 
-        # flip the mask, so that invalid attention pairs have -10000.
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-        assert not extended_attention_mask.requires_grad
-        head_mask = [None] * self.config.num_hidden_layers
+            mmt_seq_output = encoder_outputs[0]
+            mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
+            mmt_obj_output = mmt_seq_output[:, obj_begin:obj_end]
 
-        encoder_outputs = self.encoder(
-            encoder_inputs, extended_attention_mask, head_mask=head_mask
-        )
+            results = {
+                "mmt_seq_output": mmt_seq_output,
+                "mmt_txt_output": mmt_txt_output,
+                "mmt_obj_output": mmt_obj_output
+            }
+        else:   # textvqa
+            # build embeddings for predictions in previous decoding steps
+            # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
+            dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
 
-        mmt_seq_output = encoder_outputs[0]
-        mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
-        mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
-        mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
+            # a zero mask for decoding steps, so the encoding steps elements can't
+            # attend to decoding steps.
+            # A triangular causal mask will be filled for the decoding steps
+            # later in extended_attention_mask
+            dec_mask = torch.zeros(
+                dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
+            )
 
-        results = {
-            "mmt_seq_output": mmt_seq_output,
-            "mmt_txt_output": mmt_txt_output,
-            "mmt_ocr_output": mmt_ocr_output,
-            "mmt_dec_output": mmt_dec_output,
-        }
+            encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb, dec_emb], dim=1)
+            attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask, dec_mask], dim=1)
+
+            # offsets of each modality in the joint embedding space
+            txt_max_num = txt_mask.size(-1)
+            obj_max_num = obj_mask.size(-1)
+            ocr_max_num = ocr_mask.size(-1)
+            dec_max_num = dec_mask.size(-1)
+            txt_begin = 0
+            txt_end = txt_begin + txt_max_num
+            ocr_begin = txt_max_num + obj_max_num
+
+            ocr_end = ocr_begin + ocr_max_num
+
+            # We create a 3D attention mask from a 2D tensor mask.
+            # Sizes are [batch_size, 1, from_seq_length, to_seq_length]
+            # So we can broadcast to
+            # [batch_size, num_heads, from_seq_length, to_seq_length]
+            to_seq_length = attention_mask.size(1)
+            from_seq_length = to_seq_length
+
+            # generate the attention mask similar to prefix LM
+            # all elements can attend to the elements in encoding steps
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            extended_attention_mask = extended_attention_mask.repeat(
+                1, 1, from_seq_length, 1
+            )
+            # decoding step elements can attend to themselves in a causal manner
+            extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
+                dec_max_num, encoder_inputs.device
+            )
+
+            # flip the mask, so that invalid attention pairs have -10000.
+            extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+            assert not extended_attention_mask.requires_grad
+            head_mask = [None] * self.config.num_hidden_layers
+
+            encoder_outputs = self.encoder(
+                encoder_inputs, extended_attention_mask, head_mask=head_mask
+            )
+
+            mmt_seq_output = encoder_outputs[0]
+            mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
+            mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
+            mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
+
+            results = {
+                "mmt_seq_output": mmt_seq_output,
+                "mmt_txt_output": mmt_txt_output,
+                "mmt_ocr_output": mmt_ocr_output,
+                "mmt_dec_output": mmt_dec_output,
+            }
         return results
 
 

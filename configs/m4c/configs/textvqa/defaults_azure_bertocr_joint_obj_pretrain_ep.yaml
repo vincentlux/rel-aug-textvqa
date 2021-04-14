@@ -1,0 +1,51 @@
+includes:
+- ./defaults.yaml
+
+training:
+  num_workers: 0
+  mlflow: true
+
+dataset_config:
+  textvqa:
+    use_images: false
+    use_features: true
+    max_features: 100
+    zoo_requirements:
+    - textvqa.defaults
+    - textvqa.ocr_en
+    features:
+      train:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      val:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      test:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+    annotations:
+      train:
+      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent_v1.npy
+      val:
+      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+      test:
+      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+    processors:
+      context_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 250
+
+model_config:
+  m4c:
+    losses:
+      - type: m4c_decoding_bce_with_mask
+      - type: cross_entropy
+    joint_train:
+      task: obj_pretrain
+      format: epoch
+    ocr:
+      text_embedding: bert
+      mmt_in_dim: 3420  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
+

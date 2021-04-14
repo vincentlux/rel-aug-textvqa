@@ -3,7 +3,7 @@
 from mmf.common.sample import SampleList
 from mmf.common.test_reporter import TestReporter
 from mmf.datasets.multi_dataset_loader import MultiDatasetLoader
-
+from mmf.common.registry import registry
 
 class DatasetLoader:
     def __init__(self, config):
@@ -28,6 +28,19 @@ class DatasetLoader:
             "val": self.val_dataset,
             "test": self.test_dataset,
         }
+
+        # joint train
+        # if 'm4c' in self.config.model_config and registry.get('joint_train', False):
+        #     self.train_joint_dataset = MultiDatasetLoader("train_joint")
+        #     self.val_joint_dataset = MultiDatasetLoader("val_joint")
+        #     self.train_joint_dataset.load(self.config)
+        #     self.val_joint_dataset.load(self.config)
+        #     self.train_joint_loader = self.train_dataset
+        #     self.val_joint_loader = self.val_dataset
+        #     self.mapping.update({
+        #         "train_joint": self.train_joint_dataset,
+        #         "val_joint": self.val_joint_dataset,
+        #     })
 
         self.test_reporter = None
         self.should_not_log = self.config.training.should_not_log

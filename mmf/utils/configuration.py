@@ -233,6 +233,12 @@ class Configuration:
         )
         registry.register("config", self.config)
 
+        # register joint_train
+        for cfg in self.config.model_config:
+            if 'joint_train' in self.config.model_config[cfg]:
+                registry.register('joint_train', True)
+                break
+
     def _build_default_config(self):
         self.default_config_path = get_default_config_path()
         default_config = load_yaml(self.default_config_path)

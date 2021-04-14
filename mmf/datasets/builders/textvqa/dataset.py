@@ -13,6 +13,7 @@ class TextVQADataset(MMFDataset):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
+        self.joint_train = registry.get("joint_train")
 
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
@@ -83,7 +84,13 @@ class TextVQADataset(MMFDataset):
 
         return predictions
 
+    def _get_current_epoch_mode(self):
+        import pdb; pdb.set_trace()
+        print(self.config)
+        # if self.config.model_config
+
     def __getitem__(self, idx):
+        current_epoch_mode = self._get_current_epoch_mode()
         sample_info = self.annotation_db[idx]
         sample_info = self.preprocess_sample_info(sample_info)
         current_sample = Sample()

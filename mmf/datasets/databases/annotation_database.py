@@ -2,13 +2,14 @@
 import copy
 import json
 
+import random
 import numpy as np
 import torch
 from tqdm import tqdm, trange
 from mmf.utils.file_io import PathManager
 from mmf.utils.general import get_absolute_path
 from mmf.common.registry import registry
-
+random.seed(1)
 
 class AnnotationDatabase(torch.utils.data.Dataset):
     """
@@ -26,6 +27,7 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         for s in path.split(","):
             paths.append(get_absolute_path(s))
         self.load_file_num = 0
+        self.joint_train = registry.get("joint_train")
         self.load_annotation_db(paths)
         print("in __init__ of annotation_database\n", self.load_file_num)
         print(self.data[1].keys())
@@ -39,14 +41,18 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
     def load_annotation_db(self, paths):
         print(paths)
-        for path in paths:
+        for i, path in enumerate(paths):
             if path.find("visdial") != -1 or path.find("visual_dialog") != -1:
                 self._load_visual_dialog(path)
             elif path.endswith(".npy"):
                 if self.load_file_num == 0:
                     self._load_npy(path)
                 else:
-                    self._append_npy(path)
+                    # assume obj pretrain only appear in the last
+                    if self.joint_train and i == len(paths) - 1:
+                        self._append_obj_pretrain_npy(path)
+                    else:
+                        self._append_npy(path)
             elif path.endswith(".jsonl"):
                 self._load_jsonl(path)
             elif path.endswith(".json"):
@@ -139,6 +145,35 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]
 
         self.load_file_num += 1
+
+    def _append_obj_pretrain_npy(self, path):
+        print(f"Appending annotations from {path}...")
+        with PathManager.open(path, "rb") as f:
+            new_db = np.load(f, allow_pickle=True)
+        new_start_idx = 0
+        if type(new_db) == dict:
+            new_data = new_db.get("data", [])
+        else:
+            new_data = new_db
+            if "image_id" not in self.data[0]:
+                new_start_idx = 1
+
+        print(f'joint train data: {len(new_data)}...original data: {len(self.data)}')
+
+        import pdb; pdb.set_trace()
+        new_data = new_data.tolist()
+        new_data = random.sample(new_data, len(self.data))
+        print(f'reduced joint train data size to {len(new_data)}')
+
+        for idx in trange(new_start_idx, len(new_data)):
+            # TODO: change parts other than ocr_xxx
+            # self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
+            # self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
+            # self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]
+
+        self.load_file_num += 1
+
+
 
     def _load_json(self, path):
         with PathManager.open(path, "r") as f:

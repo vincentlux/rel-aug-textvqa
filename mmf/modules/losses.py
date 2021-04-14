@@ -112,6 +112,8 @@ class Losses(nn.Module):
                 )
             return output
 
+        import pdb; pdb.set_trace()
+        # should check if is joint_train and which loss should use
         for loss in self.losses:
             output.update(loss(sample_list, model_output))
 
@@ -578,4 +580,5 @@ class CrossEntropyLoss(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss(**params)
 
     def forward(self, sample_list, model_output):
+        # TODO: check current_epoch_mode and decide use or not?
         return self.loss_fn(model_output["scores"], sample_list.targets)
