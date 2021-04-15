@@ -239,13 +239,19 @@ class M4C(BaseModel):
             ocr_textemb = sample_list.context_feature_0
             ocr_textemb = F.normalize(ocr_textemb, dim=-1)
             assert ocr_textemb.size(-1) == 300
+            # Now the question text embedding should be generated separately
+            fwd_results["text_bert_out"] = self.text_bert(
+                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
+            )
         elif self.config.ocr.text_embedding == "bert":
-            
-            fwd_results["ocr_token_inds"] = sample_list.bert_context 
-            # binary mask of valid text (question words) vs padding
-            fwd_results["ocr_token_mask"] = sample_list.bert_input_mask
-            
-            ocr_rawtextemb = self.text_bert(txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"])
+            # THIS PART IS TO ENCODE QUESTION AND TOKENS SEPARATELY!
+            '''
+            fwd_results["text_bert_out"] = self.text_bert(
+                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
+            )
+            ocr_token_inds = sample_list.bert_context 
+            ocr_token_mask = sample_list.bert_input_mask
+            ocr_rawtextemb = self.text_bert(txt_inds=ocr_token_inds, txt_mask=ocr_token_mask)
             #ocr_rawtextemb = self.ocrtext_bert(txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"])
             s = ocr_rawtextemb.shape
             m = 50
@@ -253,7 +259,27 @@ class M4C(BaseModel):
             for i in range(s[0]):
                 map_ls = sample_list.token_map[i][:m]
                 ocr_textemb[i,:len(map_ls)]=ocr_rawtextemb[i][map_ls]
-                
+            '''
+            print(fwd_results["txt_inds"].shape,\
+                  fwd_results["txt_mask"].shape,\
+                  sample_list.text,\
+                  sample_list.bert_context.shape,\
+                  sample_list.bert_input_mask.shape,\
+                 )
+            raise NotImplementedError
+            fwd_results["text_bert_out"] = self.text_bert(
+                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
+            )
+            ocr_token_inds = sample_list.bert_context 
+            ocr_token_mask = sample_list.bert_input_mask
+            ocr_rawtextemb = self.text_bert(txt_inds=ocr_token_inds, txt_mask=ocr_token_mask)
+            s = ocr_rawtextemb.shape
+            m = 50
+            ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
+            for i in range(s[0]):
+                map_ls = sample_list.token_map[i][:m]
+                ocr_textemb[i,:len(map_ls)]=ocr_rawtextemb[i][map_ls]
+    
         elif self.config.ocr.text_embedding == "notext":
             ocr_textemb = sample_list.context_feature_0
             ocr_textemb = F.normalize(ocr_fasttext, dim=-1)
@@ -306,10 +332,7 @@ class M4C(BaseModel):
 
     def _forward_mmt(self, sample_list, fwd_results):
         # first forward the text BERT layers
-        text_bert_out = self.text_bert(
-            txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
-        )
-        fwd_results["txt_emb"] = self.text_bert_out_linear(text_bert_out)
+        fwd_results["txt_emb"] = self.text_bert_out_linear(fwd_results["text_bert_out"])
         mmt_results = self.mmt(
             txt_emb=fwd_results["txt_emb"],
             txt_mask=fwd_results["txt_mask"],
