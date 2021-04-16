@@ -132,21 +132,18 @@ class FeaturesDatabase(ImageDatabase):
 
         item = {}
         for idx, image_feature in enumerate(features):
-            if idx == len(features) - 1 and self.joint_train:
-                joint_train_mode = registry.get("joint_train_mode")
-                item["image_feature_%s" % joint_train_mode] = image_feature
-                if infos is not None:
-                    item["image_info_%s" % joint_train_mode] = infos[idx]
-            else:
-                item["image_feature_%s" % idx] = image_feature
-                if infos is not None:
-                    # infos[idx].pop("cls_prob", None)
-                    item["image_info_%s" % idx] = infos[idx]
-
+            # if idx == len(features) - 1 and current_epoch_mode != "textvqa":
+            #     joint_train_mode = registry.get("joint_train_mode")
+            #     item["image_feature_%s" % joint_train_mode] = image_feature
+            #     if infos is not None:
+            #         item["image_info_%s" % joint_train_mode] = infos[idx]
+            # else:
+            item["image_feature_%s" % idx] = image_feature
+            if infos is not None:
+                item["image_info_%s" % idx] = infos[idx]
         return item
 
     def _get_feature_path_based_on_image(self, item):
-        import pdb; pdb.set_trace()
         image_path = self._get_attrs(item)[0]
         if isinstance(image_path, int):
             return f"{image_path}.npy"

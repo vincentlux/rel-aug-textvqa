@@ -139,9 +139,9 @@ class TextVQADataset(MMFDataset):
                 features["image_feature_1"] = features[f"image_feature_{source_to_use}"]
                 features["image_info_1"] = features[f"image_info_{source_to_use}"]
 
-            if self.joint_train and current_epoch_mode != "textvqa":
-                features["image_feature_0"] = features[f"image_feature_{current_epoch_mode}"]
-                features["image_info_0"] = features[f"image_info_{current_epoch_mode}"]
+            # if self.joint_train and current_epoch_mode != "textvqa":
+            #     features["image_feature_0"] = features[f"image_feature_{current_epoch_mode}"]
+            #     features["image_info_0"] = features[f"image_info_{current_epoch_mode}"]
             current_sample.update(features)
 
         current_sample = self.add_sample_details(sample_info, current_sample)
