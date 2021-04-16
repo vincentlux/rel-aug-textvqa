@@ -46,6 +46,9 @@ class TextVQADataset(MMFDataset):
         elif self.current_epoch_mode == self.joint_train_mode:
             sample_info = {k: v for k, v in sample_info.items() if self.joint_train_mode in k}
             sample_info = {k.replace(f'_{self.joint_train_mode}', ''): v for k, v in sample_info.items()}
+        else:
+            raise NotImplementedError
+
         return sample_info
 
 
@@ -123,9 +126,14 @@ class TextVQADataset(MMFDataset):
         current_sample = Sample()
 
         # breaking change from VQA2Dataset: load question_id
-        current_sample.question_id = torch.tensor(
-            sample_info['question_id'], dtype=torch.int
-        )
+        try:
+            current_sample.question_id = torch.tensor(
+                sample_info['question_id'], dtype=torch.int
+            )
+        except Exception as e:
+            import pdb; pdb.set_trace()
+            print(e)
+
 
         if isinstance(sample_info['image_id'], int):
             current_sample.image_id = str(sample_info['image_id'])

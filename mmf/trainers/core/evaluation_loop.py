@@ -10,6 +10,7 @@ from mmf.common.meter import Meter
 from mmf.common.report import Report
 from mmf.common.sample import to_device
 from mmf.utils.distributed import is_master
+from mmf.common.registry import registry
 
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,10 @@ class TrainerEvaluationLoopMixin(ABC):
             self.model.eval()
             disable_tqdm = not use_tqdm or not is_master()
             combined_report = None
+            # only eval textvqa
+            if registry.get("joint_train", False):
+                current_epoch_mode = "textvqa"
+                registry.register("current_epoch_mode", current_epoch_mode)
 
             for batch in tqdm.tqdm(loader, disable=disable_tqdm):
                 report = self._forward(batch)
