@@ -109,14 +109,15 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             if "image_id" not in self.data[0]:
                 self.start_idx = 1
 
-        for i in trange(self.start_idx, len(self.data)):
-            self.data[i][f"ocr_info_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_info"])
-            self.data[i][f"ocr_tokens_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_tokens"])
-            self.data[i][f"ocr_normalized_boxes_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_normalized_boxes"])
+        if "ocr_info" in self.data[self.start_idx].keys():
+            for i in trange(self.start_idx, len(self.data)):
+                self.data[i][f"ocr_info_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_info"])
+                self.data[i][f"ocr_tokens_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_tokens"])
+                self.data[i][f"ocr_normalized_boxes_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_normalized_boxes"])
 
-            self.data[i].pop("ocr_info")
-            self.data[i].pop("ocr_tokens")
-            self.data[i].pop("ocr_normalized_boxes")
+                self.data[i].pop("ocr_info")
+                self.data[i].pop("ocr_tokens")
+                self.data[i].pop("ocr_normalized_boxes")
 
         if len(self.data) == 0:
             self.data = self.db
@@ -147,6 +148,9 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         self.load_file_num += 1
 
     def _append_obj_pretrain_npy(self, path):
+        # indicate difference by different joint train task
+        # suffix = registry.get('config.model_config.m4c.joint_train.task')
+        suffix = registry.get("joint_train_mode")
         print(f"Appending annotations from {path}...")
         with PathManager.open(path, "rb") as f:
             new_db = np.load(f, allow_pickle=True)
@@ -160,19 +164,25 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
         print(f'joint train data: {len(new_data)}...original data: {len(self.data)}')
 
-        import pdb; pdb.set_trace()
         new_data = new_data.tolist()
         new_data = random.sample(new_data, len(self.data))
         print(f'reduced joint train data size to {len(new_data)}')
 
         for idx in trange(new_start_idx, len(new_data)):
-            # TODO: change parts other than ocr_xxx
-            pass
+            self.data[idx][f'obj_normalized_boxes_{suffix}'] = new_data[idx]["obj_normalized_boxes"]
+            self.data[idx][f'answers_{suffix}'] = new_data[idx]['answers']
+            self.data[idx][f'feature_path_{suffix}'] = new_data[idx]['feature_path']
+            self.data[idx][f'image_id_{suffix}'] = new_data[idx]['image_id']
+            self.data[idx][f'image_path_{suffix}'] = new_data[idx]['image_path']
+            self.data[idx][f'question_{suffix}'] = new_data[idx]['question']
+            self.data[idx][f'question_id_{suffix}'] = new_data[idx]['question_id']
+
             # self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
             # self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
             # self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]
 
-        self.load_file_num += 1
+        # TODO: check if needs to +1 (no need to add bc this is used for rotating ocr frcnn feat)
+        # self.load_file_num += 1
 
 
 

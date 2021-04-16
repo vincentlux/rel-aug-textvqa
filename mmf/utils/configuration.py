@@ -237,6 +237,8 @@ class Configuration:
         for cfg in self.config.model_config:
             if 'joint_train' in self.config.model_config[cfg]:
                 registry.register('joint_train', True)
+                joint_train_mode = self.config.model_config[cfg].joint_train.task
+                registry.register('joint_train_mode', joint_train_mode)
                 break
 
     def _build_default_config(self):

@@ -14,6 +14,7 @@ class TextVQADataset(MMFDataset):
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
         self.joint_train = registry.get("joint_train")
+        self.joint_train_mode = registry.get("joint_train_mode", None)
 
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
@@ -36,7 +37,17 @@ class TextVQADataset(MMFDataset):
             sample_info["feature_path"] = sample_info["image_path"].replace(
                 ".jpg", ".npy"
             )
+
+        # postprocess for joint_train
+        if not self.current_epoch_mode:
+            return sample_info
+        elif self.current_epoch_mode == 'textvqa':
+            sample_info = {k: v for k, v in sample_info.items() if "obj_pretrain" not in k}
+        elif self.current_epoch_mode == self.joint_train_mode:
+            sample_info = {k: v for k, v in sample_info.items() if self.joint_train_mode in k}
+            sample_info = {k.replace(f'_{self.joint_train_mode}', ''): v for k, v in sample_info.items()}
         return sample_info
+
 
     def postprocess_evalai_entry(self, entry):
         return entry  # Do nothing
@@ -85,25 +96,41 @@ class TextVQADataset(MMFDataset):
         return predictions
 
     def _get_current_epoch_mode(self):
-        import pdb; pdb.set_trace()
-        print(self.config)
-        # if self.config.model_config
+        if self.joint_train:
+            return registry.get("current_epoch_mode")
+        else:
+            return None
+
+    def _get_id_key(self, orig_key_name, mode):
+        # build key name to handle joint_train
+        if not mode:
+            return orig_key_name
+        return f"{orig_key_name}_{mode}"
+
+    def update_current_epoch_mode(self, current_epoch_mode):
+        self.current_epoch_mode = current_epoch_mode
+
+    def is_textvqa_train(self):
+        if self.current_epoch_mode is None or self.current_epoch_mode == 'textvqa':
+            return True
+        return False
 
     def __getitem__(self, idx):
         current_epoch_mode = self._get_current_epoch_mode()
+        self.update_current_epoch_mode(current_epoch_mode)
         sample_info = self.annotation_db[idx]
         sample_info = self.preprocess_sample_info(sample_info)
         current_sample = Sample()
 
         # breaking change from VQA2Dataset: load question_id
         current_sample.question_id = torch.tensor(
-            sample_info["question_id"], dtype=torch.int
+            sample_info['question_id'], dtype=torch.int
         )
 
-        if isinstance(sample_info["image_id"], int):
-            current_sample.image_id = str(sample_info["image_id"])
+        if isinstance(sample_info['image_id'], int):
+            current_sample.image_id = str(sample_info['image_id'])
         else:
-            current_sample.image_id = sample_info["image_id"]
+            current_sample.image_id = sample_info['image_id']
         if self._use_features is True:
             # image_xx_0: obj frcnn feat; image_xx_1: ocr frcnn feat
             features = self.features_db[idx]
@@ -111,6 +138,10 @@ class TextVQADataset(MMFDataset):
             if f"image_feature_{source_to_use}" in features:
                 features["image_feature_1"] = features[f"image_feature_{source_to_use}"]
                 features["image_info_1"] = features[f"image_info_{source_to_use}"]
+
+            if self.joint_train and current_epoch_mode != "textvqa":
+                features["image_feature_0"] = features[f"image_feature_{current_epoch_mode}"]
+                features["image_info_0"] = features[f"image_info_{current_epoch_mode}"]
             current_sample.update(features)
 
         current_sample = self.add_sample_details(sample_info, current_sample)
@@ -176,96 +207,97 @@ class TextVQADataset(MMFDataset):
                 sample.image_feature_1 = torch.zeros_like(sample.image_feature_1)
             return sample
 
-        # Preprocess OCR tokens
-        source_to_use = registry.get('current_epoch', 0) % self.annotation_db.load_file_num
-        if f"ocr_tokens_{source_to_use}" not in sample_info:
-            ocr_token_source = sample_info[f"ocr_tokens_0"]
-        else:
-            ocr_token_source = sample_info[f"ocr_tokens_{source_to_use}"]
+        if self.is_textvqa_train():
+            # Preprocess OCR tokens
+            source_to_use = registry.get('current_epoch', 0) % self.annotation_db.load_file_num
+            if f"ocr_tokens_{source_to_use}" not in sample_info:
+                ocr_token_source = sample_info[f"ocr_tokens_0"]
+            else:
+                ocr_token_source = sample_info[f"ocr_tokens_{source_to_use}"]
 
-        if hasattr(self, "ocr_token_processor"):
-            ocr_tokens = [
-                self.ocr_token_processor({"text": token})["text"]
-                for token in ocr_token_source
-            ]
-        else:
-            ocr_tokens = ocr_token_source
-        # Get FastText or bert embeddings for OCR tokens
-        # TO CHANGE!!!!!!!
-        ocr_tokens = ocr_tokens[:self.config.processors.bbox_processor.params.max_length]
-        if self.config.processors.context_processor.type == "fasttext":
-            context = self.context_processor({"tokens": ocr_tokens})
-            sample.context = context["text"]
-            sample.ocr_tokens = context["tokens"]
-            #print(sample.ocr_tokens)
-            #raise NotImplementedError
-            sample.context_tokens = object_to_byte_tensor(context["tokens"])
-            sample.context_feature_0 = context["text"]
-            sample.context_info_0 = Sample()
-            sample.context_info_0.max_features = context["length"]
-        elif self.config.processors.context_processor.type == "bert_tokenizer":
-            context_processor_args = {}
-            context_processor_args["text"] = " ".join(ocr_tokens)
-            context_processor_args["tokens"] = ocr_tokens
-            processed_context = self.context_processor(context_processor_args)
-            sample.ocr_tokens = ocr_tokens
-            sample.context_tokens = object_to_byte_tensor(ocr_tokens)
-            sample.context_info_0 = Sample()
-            sample.context_info_0.max_features = torch.tensor(len(ocr_tokens))
-            sample.bert_context = processed_context["input_ids"]
-            sample.bert_tokens = processed_context["tokens"]
-            sample.bert_input_mask = processed_context["input_mask"]
-            sample.token_map = []
-            cnt = 0; ptr = 1
-            while(cnt<len(ocr_tokens)):
-                sample.token_map.append(ptr)
-                tgt_token = ocr_tokens[cnt]
-                processed_token = self.context_processor.tokenize(tgt_token)
-                ptr += len(processed_token)
-                if ptr>= sample.bert_input_mask.shape[0]:
-                    break
-                cnt+=1
-            #while(len(sample.token_map)<len(ocr_tokens)):
-            #    sample.token_map.append(-1)
-        else:
-            raise NotImplementedError
+            if hasattr(self, "ocr_token_processor"):
+                ocr_tokens = [
+                    self.ocr_token_processor({"text": token})["text"]
+                    for token in ocr_token_source
+                ]
+            else:
+                ocr_tokens = ocr_token_source
+            # Get FastText or bert embeddings for OCR tokens
+            # TO CHANGE!!!!!!!
+            ocr_tokens = ocr_tokens[:self.config.processors.bbox_processor.params.max_length]
+            if self.config.processors.context_processor.type == "fasttext":
+                context = self.context_processor({"tokens": ocr_tokens})
+                sample.context = context["text"]
+                sample.ocr_tokens = context["tokens"]
+                #print(sample.ocr_tokens)
+                #raise NotImplementedError
+                sample.context_tokens = object_to_byte_tensor(context["tokens"])
+                sample.context_feature_0 = context["text"]
+                sample.context_info_0 = Sample()
+                sample.context_info_0.max_features = context["length"]
+            elif self.config.processors.context_processor.type == "bert_tokenizer":
+                context_processor_args = {}
+                context_processor_args["text"] = " ".join(ocr_tokens)
+                context_processor_args["tokens"] = ocr_tokens
+                processed_context = self.context_processor(context_processor_args)
+                sample.ocr_tokens = ocr_tokens
+                sample.context_tokens = object_to_byte_tensor(ocr_tokens)
+                sample.context_info_0 = Sample()
+                sample.context_info_0.max_features = torch.tensor(len(ocr_tokens))
+                sample.bert_context = processed_context["input_ids"]
+                sample.bert_tokens = processed_context["tokens"]
+                sample.bert_input_mask = processed_context["input_mask"]
+                sample.token_map = []
+                cnt = 0; ptr = 1
+                while(cnt<len(ocr_tokens)):
+                    sample.token_map.append(ptr)
+                    tgt_token = ocr_tokens[cnt]
+                    processed_token = self.context_processor.tokenize(tgt_token)
+                    ptr += len(processed_token)
+                    if ptr>= sample.bert_input_mask.shape[0]:
+                        break
+                    cnt+=1
+                #while(len(sample.token_map)<len(ocr_tokens)):
+                #    sample.token_map.append(-1)
+            else:
+                raise NotImplementedError
 
-        # Get PHOC embeddings for OCR tokens
-        if hasattr(self, "phoc_processor"):
-            context_phoc = self.phoc_processor({"tokens": ocr_tokens})
-            sample.context_feature_1 = context_phoc["text"]
-            sample.context_info_1 = Sample()
-            sample.context_info_1.max_features = context_phoc["length"]
-        # OCR order vectors (ZHEN: removed)
-        '''
-        if self.config.get("use_order_vectors", False):
-            order_vectors = np.eye(len(sample.ocr_tokens), dtype=np.float32)
-            order_vectors = torch.from_numpy(order_vectors)
-            order_vectors[context["length"] :] = 0
-            sample.order_vectors = order_vectors
-        '''
-        # OCR bounding box information
-        if f"ocr_normalized_boxes_{source_to_use}" not in sample_info:
-            box_key = f"ocr_normalized_boxes_0"
-        else:
-            box_key = f"ocr_normalized_boxes_{source_to_use}"
-        if f"ocr_info_{source_to_use}" not in sample_info:
-            info_key = f"ocr_info_0"
-        else:
-            info_key = f"ocr_info_{source_to_use}"
+            # Get PHOC embeddings for OCR tokens
+            if hasattr(self, "phoc_processor"):
+                context_phoc = self.phoc_processor({"tokens": ocr_tokens})
+                sample.context_feature_1 = context_phoc["text"]
+                sample.context_info_1 = Sample()
+                sample.context_info_1.max_features = context_phoc["length"]
+            # OCR order vectors (ZHEN: removed)
+            '''
+            if self.config.get("use_order_vectors", False):
+                order_vectors = np.eye(len(sample.ocr_tokens), dtype=np.float32)
+                order_vectors = torch.from_numpy(order_vectors)
+                order_vectors[context["length"] :] = 0
+                sample.order_vectors = order_vectors
+            '''
+            # OCR bounding box information
+            if f"ocr_normalized_boxes_{source_to_use}" not in sample_info:
+                box_key = f"ocr_normalized_boxes_0"
+            else:
+                box_key = f"ocr_normalized_boxes_{source_to_use}"
+            if f"ocr_info_{source_to_use}" not in sample_info:
+                info_key = f"ocr_info_0"
+            else:
+                info_key = f"ocr_info_{source_to_use}"
 
-        if box_key in sample_info and hasattr(self, "copy_processor"):
-            # New imdb format: OCR bounding boxes are already pre-computed
-            max_len = self.config.processors.answer_processor.params.max_length
-            sample.ocr_bbox_coordinates = self.copy_processor(
-                {"blob": sample_info[box_key]}
-            )["blob"][:max_len]
-        elif self.use_ocr_info and info_key in sample_info:
-            # Old imdb format: OCR bounding boxes are computed on-the-fly
-            # from ocr_info
-            sample.ocr_bbox_coordinates = self.bbox_processor(
-                {"info": sample_info[info_key]}
-            )["bbox"].coordinates
+            if box_key in sample_info and hasattr(self, "copy_processor"):
+                # New imdb format: OCR bounding boxes are already pre-computed
+                max_len = self.config.processors.answer_processor.params.max_length
+                sample.ocr_bbox_coordinates = self.copy_processor(
+                    {"blob": sample_info[box_key]}
+                )["blob"][:max_len]
+            elif self.use_ocr_info and info_key in sample_info:
+                # Old imdb format: OCR bounding boxes are computed on-the-fly
+                # from ocr_info
+                sample.ocr_bbox_coordinates = self.bbox_processor(
+                    {"info": sample_info[info_key]}
+                )["bbox"].coordinates
 
         return sample
 
@@ -274,19 +306,22 @@ class TextVQADataset(MMFDataset):
         answers = sample_info.get("answers", [])
         answer_processor_arg = {"answers": answers}
 
-        answer_processor_arg["tokens"] = sample.pop("ocr_tokens", [])
-
-        processed_answers = self.answer_processor(answer_processor_arg)
-
-        assert not self.config.fast_read, (
-            "In TextVQADataset, online OCR sampling is incompatible "
-            "with fast_read, so fast_read is currently not supported."
-        )
+        if self.is_textvqa_train():  # original train
+            answer_processor_arg["tokens"] = sample.pop("ocr_tokens", [])
+            processed_answers = self.answer_processor(answer_processor_arg)
+        else:
+            processed_answers = answer_processor_arg
 
         sample.update(processed_answers)
         sample.answers = object_to_byte_tensor(answers)
 
-        if "answers_scores" in sample:
-            sample.targets = sample.pop("answers_scores")
+        if self.is_textvqa_train():
+            if "answers_scores" in sample:
+                sample.targets = sample.pop("answers_scores")
+        elif self.current_epoch_mode == 'obj_pretrain':
+            if isinstance(processed_answers["answers"], int):
+                sample.targets = torch.tensor(processed_answers["answers"])
+        else:
+            raise NotImplementedError
 
         return sample

@@ -183,7 +183,7 @@ class M4C(BaseModel):
 
 
     def forward(self, sample_list):
-        print("In model m4c forward, sample_list:\n", sample_list.keys())
+        # print("In model m4c forward, sample_list:\n", sample_list.keys())
         # set current_epoch_mode
         self._configure_joint_train()
         # fwd_results holds intermediate forward pass results
@@ -339,6 +339,8 @@ class M4C(BaseModel):
             ocr_mask=None,
             fixed_ans_emb=None,
             prev_inds=None,
+            joint_train=self.joint_train,
+            current_epoch_mode=self.current_epoch_mode,
         )
         fwd_results.update(mmt_results)
         # forward output
@@ -544,8 +546,10 @@ class MMT(BertPreTrainedModel):
             ocr_mask,
             fixed_ans_emb,
             prev_inds,
+            joint_train=False,
+            current_epoch_mode=None,
     ):
-        if self.joint_train and self.current_epoch_mode == 'obj_pretrain':
+        if joint_train and current_epoch_mode == 'obj_pretrain':
             encoder_inputs = torch.cat([txt_emb, obj_emb], dim=1)
             attention_mask = torch.cat([txt_mask, obj_mask], dim=1)
 

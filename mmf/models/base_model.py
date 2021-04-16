@@ -122,7 +122,6 @@ class BaseModel(pl.LightningModule):
         """Initializes loss for the model based ``losses`` key. Automatically called by
         MMF internally after building the model.
         """
-        import pdb; pdb.set_trace()
         losses = self.config.get("losses", [])
         if len(losses) == 0 and not self.is_pretrained:
             warnings.warn(
@@ -257,7 +256,6 @@ class BaseModel(pl.LightningModule):
                 model_output["losses"], collections.abc.Mapping
             ), "'losses' must be a dict."
         elif hasattr(self, "losses"):
-            import pdb; pdb.set_trace()
             model_output["losses"] = self.losses(sample_list, model_output)
         else:
             model_output["losses"] = {}

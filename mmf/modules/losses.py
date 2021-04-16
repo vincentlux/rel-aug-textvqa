@@ -112,7 +112,6 @@ class Losses(nn.Module):
                 )
             return output
 
-        import pdb; pdb.set_trace()
         # should check if is joint_train and which loss should use
         for loss in self.losses:
             output.update(loss(sample_list, model_output))
@@ -124,6 +123,7 @@ class Losses(nn.Module):
             # Register the losses to registry
             registry.register(registry_loss_key, output)
 
+        # TODO: do we need to remove losses field when curr epoch is not it's training epoch?
         return output
 
 
@@ -253,15 +253,15 @@ class TripleLogitBinaryCrossEntropy(nn.Module):
 
         if scores.dim() == 3:
             loss = (
-                F.binary_cross_entropy_with_logits(
-                    scores[:, 0], targets, reduction="mean"
-                )
-                + F.binary_cross_entropy_with_logits(
-                    scores[:, 1], targets, reduction="mean"
-                )
-                + F.binary_cross_entropy_with_logits(
-                    scores[:, 2], targets, reduction="mean"
-                )
+                    F.binary_cross_entropy_with_logits(
+                        scores[:, 0], targets, reduction="mean"
+                    )
+                    + F.binary_cross_entropy_with_logits(
+                scores[:, 1], targets, reduction="mean"
+            )
+                    + F.binary_cross_entropy_with_logits(
+                scores[:, 2], targets, reduction="mean"
+            )
             )
         else:
             loss = F.binary_cross_entropy_with_logits(scores, targets, reduction="mean")
@@ -558,6 +558,10 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         self.one = torch.Tensor([1.0])
 
     def forward(self, sample_list, model_output):
+        current_epoch_mode = registry.get("current_epoch_mode")
+        joint_train_mode = registry.get("joint_train_mode")
+        if joint_train_mode is not None and current_epoch_mode == joint_train_mode:  # not textvqa
+            return 0.0
         scores = model_output["scores"]
         targets = sample_list["targets"]
         loss_mask = sample_list["train_loss_mask"]
@@ -580,5 +584,8 @@ class CrossEntropyLoss(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss(**params)
 
     def forward(self, sample_list, model_output):
-        # TODO: check current_epoch_mode and decide use or not?
-        return self.loss_fn(model_output["scores"], sample_list.targets)
+        current_epoch_mode = registry.get("current_epoch_mode")
+        joint_train_mode = registry.get("joint_train_mode")
+        if joint_train_mode is not None and current_epoch_mode == joint_train_mode:  # not textvqa
+            return self.loss_fn(model_output["scores"], sample_list.targets)
+        return 0.0
