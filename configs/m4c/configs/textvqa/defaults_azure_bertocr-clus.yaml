@@ -39,6 +39,7 @@ dataset_config:
 model_config:
   m4c:
     ocr:
+      encode_concat: true
       remove_ocr_posemb: false
       text_embedding: bert
       mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 60 (position)

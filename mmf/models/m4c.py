@@ -208,12 +208,77 @@ class M4C(BaseModel):
         return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
-        fwd_results["txt_inds"] = sample_list.text
-
+        
         # binary mask of valid text (question words) vs padding
-        fwd_results["txt_mask"] = _get_mask(
-            sample_list.text_len, sample_list.text.size(1)
-        )
+        #fwd_results["txt_inds"] = sample_list.text
+        #fwd_results["txt_mask"] = sample_list.text_mask
+
+        if self.config.ocr.text_embedding == "fasttext":
+            # OCR FastText feature (300-dim)
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_textemb, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+
+            # Now the question text embedding should be generated separately
+            #fwd_results["text_bert_out"] = self.text_bert(txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"])
+            fwd_results["text_bert_out"] = self.text_bert(txt_inds=sample_list.text, txt_mask=sample_list.text_mask)
+            fwd_results["ocr_textemb"] = ocr_textemb
+
+        elif self.config.ocr.text_embedding == "bert":
+            encode_concat_flag = getattr(self.config.ocr, "encode_concat", False)
+            if encode_concat_flag:
+                combined_rawtextemb = self.text_bert(txt_inds=sample_list.bert_combined, txt_mask=sample_list.bert_combined_mask)
+                text_cat_ls, context_cat_ls = [], []
+                s = combined_rawtextemb.shape #[bs, L(seq), L(rep)]
+                l_q = 20 # Magic number
+                m = 50 # Magic number
+                for i in range(s[0]):
+                    
+                    if i>=len(sample_list.text_len):
+                        print(sample_list.text_len,i)
+                        print(sample_list.text_len[i])
+                        raise NotImplementedError
+                    if l_q<sample_list.text_len[i]:
+                        print(sample_list.text_len,i)
+                        print(sample_list.text_len[i])
+                        raise NotImplementedError
+                    text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]], (0,0,0,l_q-sample_list.text_len[i]),"constant",0) #[bs,l_q,L(rep)]
+                    map_ls = sample_list.combined_token_map[i][:m]
+                    ocr_token_rep = F.pad(combined_rawtextemb[i][map_ls],(0,0,0,m-len(map_ls)),"constant",0)
+                    text_cat_ls.append(text_token_rep)
+                    context_cat_ls.append(ocr_token_rep)
+                fwd_results["text_bert_out"] = torch.stack(text_cat_ls,dim=0)
+                fwd_results["ocr_textemb"] = torch.stack(context_cat_ls,dim=0)
+            else:
+                # Encode Question and OCR tokens separately
+                fwd_results["text_bert_out"] = self.text_bert(txt_inds=sample_list.text, txt_mask=sample_list.text_mask) # Does not need to pad
+                ocr_rawtextemb = self.text_bert(txt_inds=sample_list.bert_context, txt_mask=sample_list.bert_context_mask)
+                s = ocr_rawtextemb.shape #[bs, L(seq), L(rep)]
+                m = 50 # Magic number
+                context_cat_ls = []
+                #ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
+                for i in range(s[0]):
+                    if i>=len(sample_list.context_token_map):
+                        print(sample_list.context_token_map)
+                        raise NotImplementedError
+                    map_ls = sample_list.context_token_map[i][:m]
+                    if m<len(map_ls):
+                        print(map_ls)
+                        raise NotImplementedError
+                    ocr_token_rep = F.pad(ocr_rawtextemb[i][map_ls],(0,0,0,m-len(map_ls)),"constant",0)
+                    context_cat_ls.append(ocr_token_rep)
+                fwd_results["ocr_textemb"] = torch.stack(context_cat_ls,dim=0)
+    
+        elif self.config.ocr.text_embedding == "notext":
+            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = F.normalize(ocr_textemb, dim=-1)
+            assert ocr_textemb.size(-1) == 300
+            ocr_textemb = torch.zeros_like(ocr_textemb)
+            #fwd_results["text_bert_out"] = self.text_bert(txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"])
+            fwd_results["text_bert_out"] = self.text_bert(txt_inds=sample_list.text, txt_mask=sample_list.text_mask)
+            fwd_results["ocr_textemb"] = ocr_textemb
+        else:
+            raise NotImplementedError
 
     def _forward_obj_encoding(self, sample_list, fwd_results):
         # object appearance feature: Faster R-CNN fc7
@@ -234,67 +299,13 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
-        if self.config.ocr.text_embedding == "fasttext":
-            # OCR FastText feature (300-dim)
-            ocr_textemb = sample_list.context_feature_0
-            ocr_textemb = F.normalize(ocr_textemb, dim=-1)
-            assert ocr_textemb.size(-1) == 300
-            # Now the question text embedding should be generated separately
-            fwd_results["text_bert_out"] = self.text_bert(
-                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
-            )
-        elif self.config.ocr.text_embedding == "bert":
-            # THIS PART IS TO ENCODE QUESTION AND TOKENS SEPARATELY!
-            '''
-            fwd_results["text_bert_out"] = self.text_bert(
-                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
-            )
-            ocr_token_inds = sample_list.bert_context 
-            ocr_token_mask = sample_list.bert_input_mask
-            ocr_rawtextemb = self.text_bert(txt_inds=ocr_token_inds, txt_mask=ocr_token_mask)
-            #ocr_rawtextemb = self.ocrtext_bert(txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"])
-            s = ocr_rawtextemb.shape
-            m = 50
-            ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
-            for i in range(s[0]):
-                map_ls = sample_list.token_map[i][:m]
-                ocr_textemb[i,:len(map_ls)]=ocr_rawtextemb[i][map_ls]
-            '''
-            print(fwd_results["txt_inds"].shape,\
-                  fwd_results["txt_mask"].shape,\
-                  sample_list.text,\
-                  sample_list.bert_context.shape,\
-                  sample_list.bert_input_mask.shape,\
-                 )
-            raise NotImplementedError
-            fwd_results["text_bert_out"] = self.text_bert(
-                txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
-            )
-            ocr_token_inds = sample_list.bert_context 
-            ocr_token_mask = sample_list.bert_input_mask
-            ocr_rawtextemb = self.text_bert(txt_inds=ocr_token_inds, txt_mask=ocr_token_mask)
-            s = ocr_rawtextemb.shape
-            m = 50
-            ocr_textemb = torch.zeros((s[0],m,s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
-            for i in range(s[0]):
-                map_ls = sample_list.token_map[i][:m]
-                ocr_textemb[i,:len(map_ls)]=ocr_rawtextemb[i][map_ls]
-    
-        elif self.config.ocr.text_embedding == "notext":
-            ocr_textemb = sample_list.context_feature_0
-            ocr_textemb = F.normalize(ocr_fasttext, dim=-1)
-            assert ocr_textemb.size(-1) == 300
-            ocr_textemb = torch.zeros_like(ocr_fasttext)
-        else:
-            raise NotImplementedError
-
         # OCR PHOC feature (604-dim)
         ocr_phoc = sample_list.context_feature_1
         ocr_phoc = F.normalize(ocr_phoc, dim=-1)
         assert ocr_phoc.size(-1) == 604
 
         # OCR appearance feature: Faster R-CNN fc7
-        ocr_fc6 = sample_list.image_feature_1[:, : ocr_textemb.size(1), :]
+        ocr_fc6 = sample_list.image_feature_1[:, : fwd_results["ocr_textemb"].size(1), :]
         ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
         ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
 
@@ -308,7 +319,7 @@ class M4C(BaseModel):
         if self.remove_ocr_frcn:
             ocr_fc7 = torch.zeros_like(ocr_fc7)
         ocr_feat = torch.cat(
-            [ocr_textemb, ocr_phoc, ocr_fc7], dim=-1
+            [fwd_results["ocr_textemb"], ocr_phoc, ocr_fc7], dim=-1
         )
         if not self.remove_ocr_posemb:
             ocr_feat = torch.cat(
@@ -333,6 +344,7 @@ class M4C(BaseModel):
     def _forward_mmt(self, sample_list, fwd_results):
         # first forward the text BERT layers
         fwd_results["txt_emb"] = self.text_bert_out_linear(fwd_results["text_bert_out"])
+        fwd_results["txt_mask"] = sample_list.text_mask
         mmt_results = self.mmt(
             txt_emb=fwd_results["txt_emb"],
             txt_mask=fwd_results["txt_mask"],
