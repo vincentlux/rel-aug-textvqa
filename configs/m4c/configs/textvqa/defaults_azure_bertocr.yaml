@@ -15,16 +15,16 @@ dataset_config:
     - textvqa.ocr_en
     features:
       train:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       val:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       test:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
     annotations:
       train:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,textvqa/defaults/annotations/imdb_train_ocr_en.npy
       val:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy,textvqa/defaults/annotations/imdb_val_ocr_en.npy
     processors:
       context_processor:
         type: bert_tokenizer

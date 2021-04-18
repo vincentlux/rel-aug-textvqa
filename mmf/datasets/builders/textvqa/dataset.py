@@ -2,6 +2,7 @@
 import numpy as np
 import torch
 from mmf.common.sample import Sample
+from mmf.common.registry import registry
 from mmf.datasets.mmf_dataset import MMFDataset
 from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
 from mmf.utils.text import word_tokenize
@@ -100,6 +101,10 @@ class TextVQADataset(MMFDataset):
         if self._use_features is True:
             # image_xx_0: obj frcnn feat; image_xx_1: ocr frcnn feat
             features = self.features_db[idx]
+            source_to_use = registry.get('current_epoch', 0) % self.annotation_db.load_file_num +1
+            if f"image_feature_{source_to_use}" in features:
+                features["image_feature_1"] = features[f"image_feature_{source_to_use}"]
+                features["image_info_1"] = features[f"image_info_{source_to_use}"]
             current_sample.update(features)
 
         current_sample = self.add_sample_details(sample_info, current_sample)
@@ -115,6 +120,7 @@ class TextVQADataset(MMFDataset):
             for k in list(current_sample.image_info_1):
                 if k != "max_features":
                     current_sample.image_info_1.pop(k)
+        # print("in __item__", current_sample.keys())
 
         return current_sample
 
@@ -170,7 +176,14 @@ class TextVQADataset(MMFDataset):
             '''
 
         # Preprocess OCR tokens
+        source_to_use = registry.get('current_epoch', 0) % self.annotation_db.load_file_num
+        if f"ocr_tokens_{source_to_use}" not in sample_info:
+            ocr_token_source = sample_info[f"ocr_tokens_0"]
+        else:
+            ocr_token_source = sample_info[f"ocr_tokens_{source_to_use}"]
+
         if hasattr(self, "ocr_token_processor"):
+            #### THIS IS TO MERGE!!!!!
             ocr_tokens = [ self.ocr_token_processor({"text": token})["text"] for token in sample_info["ocr_tokens"] ]
         else:
             ocr_tokens = sample_info["ocr_tokens"]
@@ -179,6 +192,13 @@ class TextVQADataset(MMFDataset):
         ocr_tokens = ocr_tokens[:max_len]
         ocr_info = sample_info["ocr_info"][:max_len]
 
+            ocr_tokens = [
+                self.ocr_token_processor({"text": token})["text"]
+                for token in ocr_token_source
+            ]
+        else:
+            ocr_tokens = ocr_token_source
+        #### END OF TO MERGE
         # Get FastText or bert embeddings for OCR tokens
         # sample.ocr_tokens: ocr_tokens after initial token processor
         # sample.context_tokens: ocr_tokens to byte tensor
@@ -270,18 +290,27 @@ class TextVQADataset(MMFDataset):
             )["blob"][:max_len]
         
         # OCR bounding box information
-        if "ocr_normalized_boxes" in sample_info and hasattr(self, "copy_processor"):
+        if f"ocr_normalized_boxes_{source_to_use}" not in sample_info:
+            box_key = f"ocr_normalized_boxes_0"
+        else:
+            box_key = f"ocr_normalized_boxes_{source_to_use}"
+        if f"ocr_info_{source_to_use}" not in sample_info:
+            info_key = f"ocr_info_0"
+        else:
+            info_key = f"ocr_info_{source_to_use}"
+
+        if box_key in sample_info and hasattr(self, "copy_processor"):
             # New imdb format: OCR bounding boxes are already pre-computed
             sample.ocr_bbox_coordinates = self.copy_processor(
-                {"blob": sample_info["ocr_normalized_boxes"]}
+                {"blob": sample_info[box_key]}
             )["blob"][:max_len]
-        elif self.use_ocr_info and "ocr_info" in sample_info:
+        elif self.use_ocr_info and info_key in sample_info:
             # Old imdb format: OCR bounding boxes are computed on-the-fly
             # from ocr_info
             raise NotImplementedError # Zhen: Not checked
             '''
             sample.ocr_bbox_coordinates = self.bbox_processor(
-                {"info": sample_info["ocr_info"]}
+                {"info": sample_info[info_key]}
             )["bbox"].coordinates
             '''
         return sample
