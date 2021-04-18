@@ -162,17 +162,66 @@ class M4C(BaseModel):
         self.answer_processor = registry.get(self._datasets[0] + "_answer_processor")
 
     def forward(self, sample_list):
-        #print("In model m4c forward, sample_list:\n", sample_list.keys())
         # fwd_results holds intermediate forward pass results
         # TODO possibly replace it with another sample list
+        # print("in forward, sample_list.targets\n", sample_list.targets)
         fwd_results = {}
-        self._forward_txt_encoding(sample_list, fwd_results)
-        self._forward_obj_encoding(sample_list, fwd_results)
-        self._forward_ocr_encoding(sample_list, fwd_results)
-        self._forward_mmt_and_output(sample_list, fwd_results)
+        max_conf = -10000000
+        pred_source = None
+        scores = None
+        updated_target = None
+        target_size = sample_list.targets.size()
+        target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
+        updated_loss_mask = None
+        loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
+        for i in range(sample_list["ocr_source_num"][0]):
+            sample_list["current_source"] = i
+            self._forward_txt_encoding(sample_list, fwd_results)
+            self._forward_obj_encoding(sample_list, fwd_results)
+            self._forward_ocr_encoding(sample_list, fwd_results)
+            self._forward_mmt_and_output(sample_list, fwd_results)
+            if self.training:
+                if i == 0:
+                    scores = fwd_results["scores"]
+                else:
+                    scores = torch.cat([scores, fwd_results["scores"]], 1)
+            else:
+                if i == 0:
+                    max_conf = fwd_results["conf"]
+                    scores = fwd_results["scores"]
+                    pred_source = torch.zeros_like(max_conf).to(torch.long)
+                    updated_target = target[:, 0]
+                    updated_loss_mask = loss_mask[:, 0]
+                else:
+                    current_source = torch.ones_like(pred_source) * i
+                    pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
+                    scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
+                    updated_target = torch.where(
+                        (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
+                        updated_target,
+                        target[:, i])
+                    updated_loss_mask = torch.where(
+                        (max_conf > fwd_results["conf"]).unsqueeze(-1),
+                        updated_loss_mask,
+                        loss_mask[:, i]
+                    )
+                    max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
         # only keep scores in the forward pass results
-        results = {"scores": fwd_results["scores"]}
+        #print("in forward:")
+        #print("scores:", scores.shape)
+        #print("train_loss_mask:", sample_list.train_loss_mask.shape)
+        if not self.training:
+        #    print(pred_source.shape)
+        #    print(pred_source)
+        #    print(updated_target.shape)
+            sample_list.targets = updated_target
+            sample_list.train_loss_mask = updated_loss_mask
+            for i in range(sample_list["ocr_source_num"][0]):
+                sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
+            results = {"scores": scores, "source": pred_source}
+        else:
+            results = {"scores": scores}
         return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
@@ -202,16 +251,17 @@ class M4C(BaseModel):
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
+        current_ocr_source_id = sample_list["current_source"]
+        current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]
         if self.config.ocr.text_embedding == "fasttext":
             # OCR FastText feature (300-dim)
-            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = current_source.context_feature_0
             ocr_textemb = F.normalize(ocr_textemb, dim=-1)
             assert ocr_textemb.size(-1) == 300
         elif self.config.ocr.text_embedding == "bert":
-
-            fwd_results["ocr_token_inds"] = sample_list.bert_context
+            fwd_results["ocr_token_inds"] = current_source.bert_context
             # binary mask of valid text (question words) vs padding
-            fwd_results["ocr_token_mask"] = sample_list.bert_input_mask
+            fwd_results["ocr_token_mask"] = current_source.bert_input_mask
             ocr_rawtextemb = self.text_bert(
                 txt_inds=fwd_results["ocr_token_inds"], txt_mask=fwd_results["ocr_token_mask"]
             )
@@ -219,11 +269,11 @@ class M4C(BaseModel):
             m = 50
             ocr_textemb = torch.zeros((s[0], m, s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
             for i in range(s[0]):
-                map_ls = sample_list.token_map[i][:m]
+                map_ls = current_source.token_map[i][:m]
                 ocr_textemb[i, :len(map_ls)] = ocr_rawtextemb[i][map_ls]
 
         elif self.config.ocr.text_embedding == "notext":
-            ocr_textemb = sample_list.context_feature_0
+            ocr_textemb = current_source.context_feature_0
             ocr_textemb = F.normalize(ocr_fasttext, dim=-1)
             assert ocr_textemb.size(-1) == 300
             ocr_textemb = torch.zeros_like(ocr_fasttext)
@@ -231,12 +281,13 @@ class M4C(BaseModel):
             raise NotImplementedError
 
         # OCR PHOC feature (604-dim)
-        ocr_phoc = sample_list.context_feature_1
+        ocr_phoc = current_source.context_feature_1
         ocr_phoc = F.normalize(ocr_phoc, dim=-1)
         assert ocr_phoc.size(-1) == 604
 
         # OCR appearance feature: Faster R-CNN fc7
-        ocr_fc6 = sample_list.image_feature_1[:, : ocr_textemb.size(1), :]
+        image_source = sample_list[f"image_feature_{current_ocr_source_id + 1}"]
+        ocr_fc6 = image_source[:, : ocr_textemb.size(1), :]
         ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
         ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
 
@@ -252,7 +303,7 @@ class M4C(BaseModel):
         ocr_feat = torch.cat(
             [ocr_textemb, ocr_phoc, ocr_fc7], dim=-1
         )
-        ocr_bbox = sample_list.ocr_bbox_coordinates
+        ocr_bbox = current_source.ocr_bbox_coordinates
         if self.remove_ocr_semantics:
             ocr_feat = torch.zeros_like(ocr_feat)
         if self.remove_ocr_bbox:
@@ -264,7 +315,7 @@ class M4C(BaseModel):
         fwd_results["ocr_mmt_in"] = ocr_mmt_in
 
         # binary mask of valid OCR vs padding
-        ocr_nums = sample_list.context_info_0.max_features
+        ocr_nums = current_source.context_info_0.max_features
         fwd_results["ocr_mask"] = _get_mask(ocr_nums, ocr_mmt_in.size(1))
 
     def _forward_mmt(self, sample_list, fwd_results):
@@ -297,13 +348,13 @@ class M4C(BaseModel):
 
     def _forward_mmt_and_output(self, sample_list, fwd_results):
         if self.training:
-            fwd_results["prev_inds"] = sample_list.train_prev_inds.clone()
+            fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
             self._forward_mmt(sample_list, fwd_results)
             self._forward_output(sample_list, fwd_results)
         else:
-            dec_step_num = sample_list.train_prev_inds.size(1)
+            dec_step_num = sample_list.train_prev_inds.size(-1)
             # print(self.config.beam_size)
-            fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds)
+            fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds[:, sample_list.current_source,:])
             fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
             if self.config.beam_size == 1:
                 # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
@@ -318,6 +369,7 @@ class M4C(BaseModel):
                     # decoding
                     argmax_inds = fwd_results["scores"].argmax(dim=-1)
                     fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+                fwd_results["conf"] = torch.sum(torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0], -1)
             else:
                 batch_size = sample_list.train_prev_inds.size(0)
                 fwd_results["scores"] = None

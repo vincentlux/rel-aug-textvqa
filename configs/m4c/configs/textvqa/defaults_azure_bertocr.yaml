@@ -4,6 +4,7 @@ includes:
 training:
   num_workers: 0
   mlflow: true
+  # evaluation_interval: 2
 
 dataset_config:
   textvqa:

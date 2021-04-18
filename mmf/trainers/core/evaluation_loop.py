@@ -38,7 +38,6 @@ class TrainerEvaluationLoopMixin(ABC):
                         report, self.metrics.required_params
                     )
                     combined_report.batch_size += report.batch_size
-
                 if single_batch is True:
                     break
 

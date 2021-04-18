@@ -635,15 +635,18 @@ class TextVQAAccuracy(BaseMetric):
         import mmf.utils.m4c_evaluators as evaluators
 
         self.evaluator = evaluators.TextVQAAccuracyEvaluator()
-        self.required_params = ["scores", "answers", "context_tokens"]
+        self.required_params = ["scores", "answers", "batch_size", "source", "context_tokens_0", "context_tokens_1"]
         self.gt_key = "answers"
 
     def calculate(self, sample_list, model_output, *args, **kwargs):
         answer_processor = registry.get(sample_list.dataset_name + "_answer_processor")
-
-        batch_size = sample_list.context_tokens.size(0)
         pred_answers = model_output["scores"].argmax(dim=-1)
-        context_tokens = sample_list.context_tokens.cpu().numpy()
+        pred_sources = model_output["source"]
+        batch_size = model_output["source"].size(0)
+        context_token_list = []
+        for i in range(sample_list.ocr_source_num[0]):
+            context_token_list.append(sample_list[f"context_tokens_{i}"].cpu().numpy())
+        # context_tokens = sample_list.context_tokens.cpu().numpy()
         answers = sample_list.get(self.gt_key).cpu().numpy()
         answer_space_size = answer_processor.get_true_vocab_size()
 
@@ -652,7 +655,7 @@ class TextVQAAccuracy(BaseMetric):
         from mmf.utils.text import word_tokenize
 
         for idx in range(batch_size):
-            tokens = byte_tensor_to_object(context_tokens[idx])
+            tokens = byte_tensor_to_object(context_token_list[pred_sources[idx]][idx])
             answer_words = []
             for answer_id in pred_answers[idx].tolist():
                 if answer_id >= answer_space_size:
@@ -670,7 +673,7 @@ class TextVQAAccuracy(BaseMetric):
             predictions.append({"pred_answer": pred_answer, "gt_answers": gt_answers})
 
         accuracy = self.evaluator.eval_pred_list(predictions)
-        accuracy = torch.tensor(accuracy).to(sample_list.context_tokens.device)
+        accuracy = torch.tensor(accuracy).to(sample_list.ocr_source_0.context_tokens.device)
 
         return accuracy
 

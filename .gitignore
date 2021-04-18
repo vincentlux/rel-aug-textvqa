@@ -9,6 +9,7 @@ scripts/const.py
 *.sh
 scripts/*.txt
 ./snap
+snap
 
 mlruns/
 
