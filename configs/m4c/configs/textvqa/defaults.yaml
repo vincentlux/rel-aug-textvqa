@@ -85,8 +85,8 @@ training:
     use_warmup: true
     warmup_factor: 0.2
     warmup_iterations: 1000
-    max_updates: 24000
-    batch_size: 32
+    max_updates: 48000
+    batch_size: 16
     num_workers: 1
     task_size_proportional_sampling: true
     early_stop:
