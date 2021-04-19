@@ -70,7 +70,6 @@ def broadcast_tensor(tensor, src=0):
 
     return tensor
 
-
 def broadcast_scalar(scalar, src=0, device="cpu"):
     if get_world_size() < 2:
         return scalar
