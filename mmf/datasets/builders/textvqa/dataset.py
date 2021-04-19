@@ -159,10 +159,9 @@ class TextVQADataset(MMFDataset):
             sample.text_len = processed_question["length"]
             '''
         
-        # 2.2 Load OCR Text   
         if not self.use_ocr:
             raise NotImplementedError
-            # ZHEN: Currently not yet checked correctness
+            # ZHEN: This is definitely to change
             '''
             # remove all OCRs from the sample
             # (i.e. make an empty OCR list)
@@ -175,200 +174,96 @@ class TextVQADataset(MMFDataset):
                 sample.image_feature_1 = torch.zeros_like(sample.image_feature_1)
             return sample
             '''
-
-        # Preprocess OCR tokens
-        # HEAD
-        source_to_use = registry.get('current_epoch', 0) % self.annotation_db.load_file_num
-        if f"ocr_tokens_{source_to_use}" not in sample_info:
-            ocr_token_source = sample_info[f"ocr_tokens_0"]
-        else:
-            ocr_token_source = sample_info[f"ocr_tokens_{source_to_use}"]
-
-        if hasattr(self, "ocr_token_processor"):
-            #### THIS IS TO MERGE!!!!!
-            ocr_tokens = [ self.ocr_token_processor({"text": token})["text"] for token in sample_info["ocr_tokens"] ]
-        else:
-            ocr_tokens = sample_info["ocr_tokens"]
-        
-        max_len = self.config.processors.answer_processor.params.max_length
-        ocr_tokens = ocr_tokens[:max_len]
-        ocr_info = sample_info["ocr_info"][:max_len]
-
-            ocr_tokens = [
-                self.ocr_token_processor({"text": token})["text"]
-                for token in ocr_token_source
-            ]
-        else:
-            ocr_tokens = ocr_token_source
-        #### END OF TO MERGE
-        # Get FastText or bert embeddings for OCR tokens
-        # sample.ocr_tokens: ocr_tokens after initial token processor
-        # sample.context_tokens: ocr_tokens to byte tensor
-        # sample.context_feature_0: raw text
-        # sample.context_info_0: length of the context
-        if self.config.processors.context_processor.type == "fasttext":
-            context = self.context_processor({"tokens": ocr_tokens})
-            #sample.context = context["text"]
-            sample.ocr_tokens = context["tokens"]
-            sample.context_tokens = object_to_byte_tensor(context["tokens"])
-            sample.context_feature_0 = context["text"]
-            sample.context_info_0 = Sample()
-            sample.context_info_0.max_features = context["length"]
-            
-            # Here, the only text that goes through BERT is the question, we directly use the tokenized info as bert input
-
-        elif self.config.processors.context_processor.type == "bert_tokenizer":
-            # Additional Sample attributes for bert tokenizer:
-            # sample.bert_context: processed bert tokens
-            # sample.bert_input_mask: processed input mask
-            # sample.token_map: indice matching map
-            sample.ocr_tokens = ocr_tokens
-            sample.context_tokens = object_to_byte_tensor(ocr_tokens)
-            sample.context_info_0 = Sample()
-            sample.context_info_0.max_features = torch.tensor(len(ocr_tokens))
-
-            context_processor_args = {}
-            context_processor_args["text"] = " ".join(ocr_tokens)
-            context_processor_args["tokens"] = ocr_tokens
-            processed_context = self.context_processor(context_processor_args)
-            sample.bert_context = processed_context["input_ids"]
-            sample.bert_context_mask = processed_context["input_mask"]
-            sample.bert_context_len = torch.tensor(len(processed_context["tokens"]), dtype=torch.long)
-            l_tmax = self.config.processors.text_processor.params.max_seq_length
-            l_cmax = self.config.processors.context_processor.params.max_seq_length
-            assert sample.text_len<=l_tmax
-            assert sample.bert_context_len<=l_cmax
-            l_pad = l_tmax+l_cmax-sample.text_len-sample.bert_context_len+1
-            sample.bert_combined = torch.cat([
-                      sample.text[:sample.text_len], 
-                      sample.bert_context[1:sample.bert_context_len],
-                      torch.zeros(l_pad, dtype=torch.long)])
-            sample.bert_combined_mask = torch.cat([
-                      sample.text_mask[:sample.text_len], 
-                      sample.bert_context_mask[1:sample.bert_context_len],
-                      torch.zeros(l_pad,dtype=torch.long)])
-            
-            sample.context_token_map = []
-            sample.combined_token_map = []
-            cnt = 0; context_ptr = 1; combined_ptr = len(processed_question["tokens"])
-            while(cnt<len(ocr_tokens)):
-                sample.context_token_map.append(context_ptr)
-                sample.combined_token_map.append(combined_ptr)
-                tgt_token = ocr_tokens[cnt]
-                processed_token = self.context_processor.tokenize(tgt_token)
-                context_ptr += len(processed_token)
-                combined_ptr += len(processed_token)
-                if context_ptr>= sample.bert_context_mask.shape[0]:
-                    break
-                cnt+=1
-            while(len(sample.context_token_map)<len(ocr_tokens)):
-                sample.context_token_map.append(l_cmax-1)
-                sample.combined_token_map.append(l_tmax+l_cmax-1)
-        else:
-            raise NotImplementedError
-        
-        # 3. Load other attributes of OCR
-        # Get PHOC embeddings for OCR tokens
-        if hasattr(self, "phoc_processor"):
-            context_phoc = self.phoc_processor({"tokens": ocr_tokens})
-            sample.context_feature_1 = context_phoc["text"]
-            sample.context_info_1 = Sample()
-            sample.context_info_1.max_features = context_phoc["length"]
-        
-        # OCR token hierarchy vectors (ZHEN: changed)
-        if self.config.get("use_ocr_word_position", False):
-            if len(ocr_info)==0:
-                vec_arr = np.zeros((0,60),dtype=np.int) # TODO: Magic Number 60
-            else:
-                # To change: fix keystr
-                tmp_keystr = "position" if "position" in ocr_info[0].keys() else "additional_properties" 
-                word_pos_arr = np.array([x[tmp_keystr] for x in ocr_info]).reshape(len(ocr_info),-1)
-                l,n = word_pos_arr.shape
-                vec_arr = np.zeros((len(sample.ocr_tokens),n),dtype=np.int)-1
-                vec_arr[:l,:] = word_pos_arr
-                vec_arr = self.pos_emb_calculator.calc(vec_arr).reshape(l,-1)
-            sample.ocr_pos_emb = self.copy_processor(
-                {"blob": vec_arr}
-            )["blob"][:max_len]
-        
-        # OCR bounding box information
-        if f"ocr_normalized_boxes_{source_to_use}" not in sample_info:
-            box_key = f"ocr_normalized_boxes_0"
-        else:
-            box_key = f"ocr_normalized_boxes_{source_to_use}"
-        if f"ocr_info_{source_to_use}" not in sample_info:
-            info_key = f"ocr_info_0"
-        else:
-            info_key = f"ocr_info_{source_to_use}"
-
-        if box_key in sample_info and hasattr(self, "copy_processor"):
-            # New imdb format: OCR bounding boxes are already pre-computed
-            sample.ocr_bbox_coordinates = self.copy_processor(
-                {"blob": sample_info[box_key]}
-            )["blob"][:max_len]
-        elif self.use_ocr_info and info_key in sample_info:
-            # Old imdb format: OCR bounding boxes are computed on-the-fly
-            # from ocr_info
-            raise NotImplementedError # Zhen: Not checked
-            '''
-            sample.ocr_bbox_coordinates = self.bbox_processor(
-                {"info": sample_info[info_key]}
-            )["bbox"].coordinates
-            '''
-        #=======
+        # 2.2 Load OCR Data (Multisource)  
         sample.ocr_source_num = self.annotation_db.load_file_num
         for current_source in range(self.annotation_db.load_file_num):
             sample.__setattr__(f"ocr_source_{current_source}", Sample())
             this_sample = sample.__getattr__(f"ocr_source_{current_source}")
+            
+            # Preprocess OCR tokens
             if f"ocr_tokens_{current_source}" not in sample_info:
                 ocr_token_source = sample_info[f"ocr_tokens_0"]
             else:
                 ocr_token_source = sample_info[f"ocr_tokens_{current_source}"]
-
             if hasattr(self, "ocr_token_processor"):
-                ocr_tokens = [
-                    self.ocr_token_processor({"text": token})["text"]
-                    for token in ocr_token_source
-                ]
+                ocr_tokens = [ self.ocr_token_processor({"text": token})["text"] for token in ocr_token_source ]
             else:
                 ocr_tokens = ocr_token_source
+            
+            max_len = self.config.processors.answer_processor.params.max_length
+            ocr_tokens = ocr_tokens[:max_len]
+
+            if f"ocr_info_{current_source}" not in sample_info:
+                ocr_info = sample_info[f"ocr_info_0"][:max_len]
+            else:
+                ocr_info = sample_info[f"ocr_info_{current_source}"][:max_len]
+
             # Get FastText or bert embeddings for OCR tokens
-            # TO CHANGE!!!!!!!
-            ocr_tokens = ocr_tokens[:self.config.processors.bbox_processor.params.max_length]
+            # sample.ocr_tokens: ocr_tokens after initial token processor
+            # sample.context_tokens: ocr_tokens to byte tensor
+            # sample.context_feature_0: raw text
+            # sample.context_info_0: length of the context
             if self.config.processors.context_processor.type == "fasttext":
                 context = self.context_processor({"tokens": ocr_tokens})
-                this_sample.context = context["text"]
+                #this_sample.context = context["text"]
                 this_sample.ocr_tokens = context["tokens"]
-                #print(sample.ocr_tokens)
-                #raise NotImplementedError
                 this_sample.context_tokens = object_to_byte_tensor(context["tokens"])
                 this_sample.context_feature_0 = context["text"]
                 this_sample.context_info_0 = Sample()
                 this_sample.context_info_0.max_features = context["length"]
+                # Here, the only text that goes through BERT is the question, we directly use the tokenized info as bert input
+
             elif self.config.processors.context_processor.type == "bert_tokenizer":
-                context_processor_args = {}
-                context_processor_args["text"] = " ".join(ocr_tokens)
-                context_processor_args["tokens"] = ocr_tokens
-                processed_context = self.context_processor(context_processor_args)
+                # Additional Sample attributes for bert tokenizer:
+                # sample.bert_context: processed bert tokens
+                # sample.bert_input_mask: processed input mask
+                # sample.token_map: indice matching map
                 this_sample.ocr_tokens = ocr_tokens
                 this_sample.context_tokens = object_to_byte_tensor(ocr_tokens)
                 this_sample.context_info_0 = Sample()
                 this_sample.context_info_0.max_features = torch.tensor(len(ocr_tokens))
+
+                context_processor_args = {}
+                context_processor_args["text"] = " ".join(ocr_tokens)
+                context_processor_args["tokens"] = ocr_tokens
+                processed_context = self.context_processor(context_processor_args)
                 this_sample.bert_context = processed_context["input_ids"]
-                this_sample.bert_tokens = processed_context["tokens"]
-                this_sample.bert_input_mask = processed_context["input_mask"]
-                this_sample.token_map = []
-                cnt = 0; ptr = 1
+                this_sample.bert_context_mask = processed_context["input_mask"]
+                this_sample.bert_context_len = torch.tensor(len(processed_context["tokens"]), dtype=torch.long)
+
+                ### Sample: contains text info (the question)
+                ### This_sample: contains ocr info (ocr text)
+                l_tmax = self.config.processors.text_processor.params.max_seq_length
+                l_cmax = self.config.processors.context_processor.params.max_seq_length
+                assert sample.text_len<=l_tmax
+                assert this_sample.bert_context_len<=l_cmax
+                l_pad = l_tmax+l_cmax-sample.text_len-this_sample.bert_context_len+1
+                this_sample.bert_combined = torch.cat([
+                        sample.text[:sample.text_len], 
+                        this_sample.bert_context[1:this_sample.bert_context_len],
+                        torch.zeros(l_pad, dtype=torch.long)])
+                this_sample.bert_combined_mask = torch.cat([
+                        sample.text_mask[:sample.text_len], 
+                        this_sample.bert_context_mask[1:this_sample.bert_context_len],
+                        torch.zeros(l_pad,dtype=torch.long)])
+                
+                this_sample.context_token_map = []
+                this_sample.combined_token_map = []
+                cnt = 0; context_ptr = 1; combined_ptr = len(processed_question["tokens"])
                 while(cnt<len(ocr_tokens)):
-                    this_sample.token_map.append(ptr)
+                    this_sample.context_token_map.append(context_ptr)
+                    this_sample.combined_token_map.append(combined_ptr)
                     tgt_token = ocr_tokens[cnt]
                     processed_token = self.context_processor.tokenize(tgt_token)
-                    ptr += len(processed_token)
-                    if ptr>= this_sample.bert_input_mask.shape[0]:
+                    context_ptr += len(processed_token)
+                    combined_ptr += len(processed_token)
+                    if context_ptr>= this_sample.bert_context_mask.shape[0]:
                         break
                     cnt+=1
-                #while(len(sample.token_map)<len(ocr_tokens)):
-                #    sample.token_map.append(-1)
+                while(len(this_sample.context_token_map)<len(ocr_tokens)):
+                    this_sample.context_token_map.append(l_cmax-1)
+                while(len(this_sample.combined_token_map)<len(ocr_tokens)):
+                    this_sample.combined_token_map.append(l_tmax+l_cmax-1)
             else:
                 raise NotImplementedError
 
@@ -378,40 +273,45 @@ class TextVQADataset(MMFDataset):
                 this_sample.context_feature_1 = context_phoc["text"]
                 this_sample.context_info_1 = Sample()
                 this_sample.context_info_1.max_features = context_phoc["length"]
-            # OCR order vectors (ZHEN: removed)
-            '''
-            if self.config.get("use_order_vectors", False):
-                order_vectors = np.eye(len(sample.ocr_tokens), dtype=np.float32)
-                order_vectors = torch.from_numpy(order_vectors)
-                order_vectors[context["length"] :] = 0
-                sample.order_vectors = order_vectors
-            '''
+            
+            # OCR token hierarchy vectors (ZHEN: changed)
+            if self.config.get("use_ocr_word_position", False):
+                if len(ocr_info)==0:
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
+                elif ("position" not in ocr_info[0]) and  "additional_properties" not in ocr_info[0]:
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
+                else:
+                    # To change: fix keystr
+                    tmp_keystr = "position" if "position" in ocr_info[0] else "additional_properties" 
+                    word_pos_arr = np.array([x[tmp_keystr] for x in ocr_info]).reshape(len(ocr_info),-1)
+                    l,n = word_pos_arr.shape
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),n),dtype=np.int) - 1
+                    vec_arr[:l,:] = word_pos_arr
+                    vec_arr = self.pos_emb_calculator.calc(vec_arr).reshape(l,-1)
+                this_sample.ocr_pos_emb = self.copy_processor(
+                    {"blob": vec_arr}
+                )["blob"][:max_len]
+            
             # OCR bounding box information
             if f"ocr_normalized_boxes_{current_source}" not in sample_info:
                 box_key = f"ocr_normalized_boxes_0"
             else:
                 box_key = f"ocr_normalized_boxes_{current_source}"
-            if f"ocr_info_{current_source}" not in sample_info:
-                info_key = f"ocr_info_0"
-            else:
-                info_key = f"ocr_info_{current_source}"
 
             if box_key in sample_info and hasattr(self, "copy_processor"):
                 # New imdb format: OCR bounding boxes are already pre-computed
-                max_len = self.config.processors.answer_processor.params.max_length
                 this_sample.ocr_bbox_coordinates = self.copy_processor(
                     {"blob": sample_info[box_key]}
                 )["blob"][:max_len]
             elif self.use_ocr_info and info_key in sample_info:
                 # Old imdb format: OCR bounding boxes are computed on-the-fly
                 # from ocr_info
+                raise NotImplementedError
+                '''
                 this_sample.ocr_bbox_coordinates = self.bbox_processor(
                     {"info": sample_info[info_key]}
                 )["bbox"].coordinates
-        # print("in add_sample_details:, sample:\n\t", sample.keys())
-        # print("in add_sample_details:, sample.ocr_source_0:\n\t", sample.ocr_source_0.keys())
-        # print("in add_sample_details:, sample.ocr_source_1:\n\t", sample["ocr_source_1"].keys())
-        # >>>>>>> fc07a4393356181696e73f47623fa44db9c19c81
+                '''
         return sample
 
     def add_answer_info(self, sample_info, sample):
