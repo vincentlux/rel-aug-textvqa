@@ -277,15 +277,15 @@ class TextVQADataset(MMFDataset):
             # OCR token hierarchy vectors (ZHEN: changed)
             if self.config.get("use_ocr_word_position", False):
                 if len(ocr_info)==0:
-                    vec_arr = np.zeros((len(sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
                 elif ("position" not in ocr_info[0]) and  "additional_properties" not in ocr_info[0]:
-                    vec_arr = np.zeros((len(sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
                 else:
                     # To change: fix keystr
-                    tmp_keystr = "position" if "position" in ocr_info[0] else 
+                    tmp_keystr = "position" if "position" in ocr_info[0] else "additional_properties" 
                     word_pos_arr = np.array([x[tmp_keystr] for x in ocr_info]).reshape(len(ocr_info),-1)
                     l,n = word_pos_arr.shape
-                    vec_arr = np.zeros((len(sample.ocr_tokens),n),dtype=np.int) - 1
+                    vec_arr = np.zeros((len(this_sample.ocr_tokens),n),dtype=np.int) - 1
                     vec_arr[:l,:] = word_pos_arr
                     vec_arr = self.pos_emb_calculator.calc(vec_arr).reshape(l,-1)
                 this_sample.ocr_pos_emb = self.copy_processor(

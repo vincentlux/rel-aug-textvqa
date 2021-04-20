@@ -284,7 +284,7 @@ class M4C(BaseModel):
                 l_q = 20 # Magic number
                 m = 50 # Magic number
                 for i in range(s[0]):
-                    text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len], (0,0,0,l_q-sample_list.text_len),"constant",0) #[bs,l_q,L(rep)]
+                    text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]], (0,0,0,l_q-sample_list.text_len[i]),"constant",0) #[bs,l_q,L(rep)]
                     map_ls = current_source.combined_token_map[i][:m]
                     ocr_token_rep = F.pad(combined_rawtextemb[i][map_ls],(0,0,0,m-len(map_ls)),"constant",0)
                     text_cat_ls.append(text_token_rep)
