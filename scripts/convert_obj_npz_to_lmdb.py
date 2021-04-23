@@ -51,8 +51,8 @@ if __name__ == '__main__':
     #     print(image_info)
 
     # ['feature_path', 'features', 'image_height', 'image_width', 'num_boxes', 'objects', 'cls_prob', 'bbox']
-    npz_folder = '/home/vincent/proj/hw/11797/data/textvqa/train_images_frcnn'
-    tgt_name = 'data/data/datasets/textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb'
+    npz_folder = '/home/vincent/proj/hw/11797/data/textvqa/train_images_frcnn_grid_8'
+    tgt_name = 'data/data/datasets/textvqa/defaults/features/open_images/detectron_attrs_max50_grid8_v0.lmdb'
 
     vg_objs = load_vocab_file('scripts/objects_vocab.txt')
     vg_attr = load_vocab_file('scripts/attributes_vocab.txt')

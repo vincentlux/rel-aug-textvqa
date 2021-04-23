@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 
 def dict_to_lmdb(out_path, dict_to_save):
-    env = lmdb.open(out_path, map_size=9995116270, writemap=True)
+    env = lmdb.open(out_path, map_size=1.5e+10, writemap=True)
     with env.begin(write=True) as txn:
         keys = []
         for i, (k, v) in enumerate(dict_to_save.items()):
