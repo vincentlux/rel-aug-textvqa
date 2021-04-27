@@ -17,6 +17,7 @@ from transformers.modeling_bert import (
     BertEmbeddings,
     BertEncoder,
     BertPreTrainedModel,
+    BertOnlyMLMHead,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,8 @@ class M4C(BaseModel):
 
     def _build_ocr_encoding(self):
         print(self.config.ocr)
+        # hacky way to check if it is mlm pretrain
+        self.pretrain_mlm = self.config.losses[0]["type"] == "mlm"
         self.ocr_text_embedding = getattr(self.config.ocr, "text_embedding", "fasttext")
         self.remove_ocr_phoc = getattr(self.config.ocr, "remove_ocr_phoc", False)
         self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
@@ -170,6 +173,7 @@ class M4C(BaseModel):
         pred_source = None
         scores = None
         updated_target = None
+        mlm_labels = None
         target_size = sample_list.targets.size()
         target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
         updated_loss_mask = None
@@ -183,8 +187,12 @@ class M4C(BaseModel):
             if self.training:
                 if i == 0:
                     scores = fwd_results["scores"]
+                    if self.pretrain_mlm:
+                        mlm_labels = fwd_results["mlm_labels"]
                 else:
                     scores = torch.cat([scores, fwd_results["scores"]], 1)
+                    if self.pretrain_mlm:
+                        mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
             else:
                 if i == 0:
                     max_conf = fwd_results["conf"]
@@ -211,6 +219,10 @@ class M4C(BaseModel):
         #print("in forward:")
         #print("scores:", scores.shape)
         #print("train_loss_mask:", sample_list.train_loss_mask.shape)
+        if self.pretrain_mlm:
+            results = {"scores": scores, "mlm_labels": mlm_labels}
+            return results
+
         if not self.training:
         #    print(pred_source.shape)
         #    print(pred_source)
@@ -225,7 +237,10 @@ class M4C(BaseModel):
         return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
-        fwd_results["txt_inds"] = sample_list.text
+        if self.pretrain_mlm:
+            fwd_results["txt_inds"] = sample_list.text_mlm
+        else:
+            fwd_results["txt_inds"] = sample_list.text
 
         # binary mask of valid text (question words) vs padding
         fwd_results["txt_mask"] = _get_mask(
@@ -233,12 +248,40 @@ class M4C(BaseModel):
         )
 
     def _forward_obj_encoding(self, sample_list, fwd_results):
+        # prepare object token features if exists
+        if self.pretrain_mlm:
+            fwd_results["obj_token_inds"] = sample_list.obj_bert_context_mlm
+            fwd_results["obj_token_inds_labels"] = sample_list.obj_bert_context_mlm_labels
+        else:
+            fwd_results["obj_token_inds"] = sample_list.obj_bert_context
+        # binary mask of valid text (question words) vs padding
+        fwd_results["obj_token_mask"] = sample_list.obj_bert_input_mask
+        obj_rawtextemb = self.text_bert(
+            txt_inds=fwd_results["obj_token_inds"], txt_mask=fwd_results["obj_token_mask"]
+        )
+        s = obj_rawtextemb.shape
+        m = 100
+        obj_textemb = torch.zeros((s[0], m, s[-1]), dtype=torch.float32, device=obj_rawtextemb.device)
+        if self.pretrain_mlm:
+            obj_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=obj_rawtextemb.device).fill_(-100)
+
+        for i in range(s[0]):
+            map_ls = sample_list.obj_token_map[i][:m]
+            obj_textemb[i, :len(map_ls)] = obj_rawtextemb[i][map_ls]
+            if self.pretrain_mlm:
+                obj_textemb_labels[i, :len(map_ls)] = fwd_results["obj_token_inds_labels"][i][map_ls]
+        if self.config.obj.normalize_bert:
+            obj_textemb = F.normalize(obj_textemb, dim=-1)
         # object appearance feature: Faster R-CNN fc7
         obj_fc6 = sample_list.image_feature_0
         obj_fc7 = self.obj_faster_rcnn_fc7(obj_fc6)
         obj_fc7 = F.normalize(obj_fc7, dim=-1)
 
-        obj_feat = obj_fc7
+        obj_feat = torch.cat(
+            [obj_textemb, obj_fc7], dim=-1
+        )
+
+        # obj_feat = obj_fc7
         obj_bbox = sample_list.obj_bbox_coordinates
         obj_mmt_in = self.obj_feat_layer_norm(
             self.linear_obj_feat_to_mmt_in(obj_feat)
@@ -250,6 +293,9 @@ class M4C(BaseModel):
         obj_nums = sample_list.image_info_0.max_features
         fwd_results["obj_mask"] = _get_mask(obj_nums, obj_mmt_in.size(1))
 
+        if self.pretrain_mlm:
+            fwd_results["obj_bert_context_mlm_labels"] = obj_textemb_labels
+
     def _forward_ocr_encoding(self, sample_list, fwd_results):
         current_ocr_source_id = sample_list["current_source"]
         current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]
@@ -259,7 +305,11 @@ class M4C(BaseModel):
             ocr_textemb = F.normalize(ocr_textemb, dim=-1)
             assert ocr_textemb.size(-1) == 300
         elif self.config.ocr.text_embedding == "bert":
-            fwd_results["ocr_token_inds"] = current_source.bert_context
+            if self.pretrain_mlm:
+                fwd_results["ocr_token_inds"] = current_source.bert_context_mlm
+                fwd_results["ocr_token_inds_labels"] = current_source.bert_context_mlm_labels
+            else:
+                fwd_results["ocr_token_inds"] = current_source.bert_context
             # binary mask of valid text (question words) vs padding
             fwd_results["ocr_token_mask"] = current_source.bert_input_mask
             ocr_rawtextemb = self.text_bert(
@@ -268,9 +318,19 @@ class M4C(BaseModel):
             s = ocr_rawtextemb.shape
             m = 50
             ocr_textemb = torch.zeros((s[0], m, s[-1]), dtype=torch.float32, device=ocr_rawtextemb.device)
+            if self.pretrain_mlm:
+                ocr_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=ocr_rawtextemb.device).fill_(-100)
             for i in range(s[0]):
                 map_ls = current_source.token_map[i][:m]
                 ocr_textemb[i, :len(map_ls)] = ocr_rawtextemb[i][map_ls]
+                if self.pretrain_mlm:
+                    ocr_textemb_labels[i, :len(map_ls)] = fwd_results["ocr_token_inds_labels"][i][map_ls]
+
+            if self.config.ocr.normalize_bert:
+                ocr_textemb = F.normalize(ocr_textemb, dim=-1)
+
+            if self.pretrain_mlm:
+                fwd_results["bert_context_mlm_labels"] = ocr_textemb_labels
 
         elif self.config.ocr.text_embedding == "notext":
             ocr_textemb = current_source.context_feature_0
@@ -332,23 +392,34 @@ class M4C(BaseModel):
             ocr_emb=fwd_results["ocr_mmt_in"],
             ocr_mask=fwd_results["ocr_mask"],
             fixed_ans_emb=self.classifier.module.weight,
-            prev_inds=fwd_results["prev_inds"],
+            prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
+            pretrain_mlm=self.pretrain_mlm,
         )
         fwd_results.update(mmt_results)
 
     def _forward_output(self, sample_list, fwd_results):
-        mmt_dec_output = fwd_results["mmt_dec_output"]
-        mmt_ocr_output = fwd_results["mmt_ocr_output"]
-        ocr_mask = fwd_results["ocr_mask"]
+        if not self.pretrain_mlm:
+            mmt_dec_output = fwd_results["mmt_dec_output"]
+            mmt_ocr_output = fwd_results["mmt_ocr_output"]
+            ocr_mask = fwd_results["ocr_mask"]
 
-        fixed_scores = self.classifier(mmt_dec_output)
-        dynamic_ocr_scores = self.ocr_ptr_net(mmt_dec_output, mmt_ocr_output, ocr_mask)
-        scores = torch.cat([fixed_scores, dynamic_ocr_scores], dim=-1)
-        fwd_results["scores"] = scores
+            fixed_scores = self.classifier(mmt_dec_output)
+            dynamic_ocr_scores = self.ocr_ptr_net(mmt_dec_output, mmt_ocr_output, ocr_mask)
+            scores = torch.cat([fixed_scores, dynamic_ocr_scores], dim=-1)
+            fwd_results["scores"] = scores
+        else:
+            mlm_labels = torch.cat([
+                sample_list.text_mlm_labels,
+                fwd_results["obj_bert_context_mlm_labels"],
+                fwd_results["bert_context_mlm_labels"],
+            ], dim=1)
+            fwd_results["mlm_labels"] = mlm_labels
+
 
     def _forward_mmt_and_output(self, sample_list, fwd_results):
         if self.training:
-            fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
+            if not self.pretrain_mlm:
+                fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
             self._forward_mmt(sample_list, fwd_results)
             self._forward_output(sample_list, fwd_results)
         else:
@@ -530,6 +601,7 @@ class MMT(BertPreTrainedModel):
 
         self.prev_pred_embeddings = PrevPredEmbeddings(config)
         self.encoder = BertEncoder(config)
+        self.cls = BertOnlyMLMHead(config)
         self.init_weights()
 
     def forward(
@@ -542,26 +614,33 @@ class MMT(BertPreTrainedModel):
             ocr_mask,
             fixed_ans_emb,
             prev_inds,
+            pretrain_mlm,
     ):
-        # build embeddings for predictions in previous decoding steps
-        # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-        dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
+        if not pretrain_mlm:
+            # build embeddings for predictions in previous decoding steps
+            # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
+            dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
 
-        # a zero mask for decoding steps, so the encoding steps elements can't
-        # attend to decoding steps.
-        # A triangular causal mask will be filled for the decoding steps
-        # later in extended_attention_mask
-        dec_mask = torch.zeros(
-            dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
-        )
-        encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb, dec_emb], dim=1)
-        attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask, dec_mask], dim=1)
+            # a zero mask for decoding steps, so the encoding steps elements can't
+            # attend to decoding steps.
+            # A triangular causal mask will be filled for the decoding steps
+            # later in extended_attention_mask
+            dec_mask = torch.zeros(
+                dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
+            )
+            # TODO: simply generate masked tokens for these
+            encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb, dec_emb], dim=1)
+            attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask, dec_mask], dim=1)
+        else:
+            encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb], dim=1)
+            attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask], dim=1)
 
         # offsets of each modality in the joint embedding space
         txt_max_num = txt_mask.size(-1)
         obj_max_num = obj_mask.size(-1)
         ocr_max_num = ocr_mask.size(-1)
-        dec_max_num = dec_mask.size(-1)
+        if not pretrain_mlm:
+            dec_max_num = dec_mask.size(-1)
         txt_begin = 0
         txt_end = txt_begin + txt_max_num
         ocr_begin = txt_max_num + obj_max_num
@@ -580,10 +659,12 @@ class MMT(BertPreTrainedModel):
         extended_attention_mask = extended_attention_mask.repeat(
             1, 1, from_seq_length, 1
         )
-        # decoding step elements can attend to themselves in a causal manner
-        extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
-            dec_max_num, encoder_inputs.device
-        )
+
+        if not pretrain_mlm:
+            # decoding step elements can attend to themselves in a causal manner
+            extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
+                dec_max_num, encoder_inputs.device
+            )
 
         # flip the mask, so that invalid attention pairs have -10000.
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
@@ -595,16 +676,24 @@ class MMT(BertPreTrainedModel):
         )
 
         mmt_seq_output = encoder_outputs[0]
-        mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
-        mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
-        mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
 
-        results = {
-            "mmt_seq_output": mmt_seq_output,
-            "mmt_txt_output": mmt_txt_output,
-            "mmt_ocr_output": mmt_ocr_output,
-            "mmt_dec_output": mmt_dec_output,
-        }
+        if not pretrain_mlm:
+            mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
+            mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
+            mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
+            results = {
+                "mmt_seq_output": mmt_seq_output,
+                "mmt_txt_output": mmt_txt_output,
+                "mmt_ocr_output": mmt_ocr_output,
+                "mmt_dec_output": mmt_dec_output,
+            }
+        else:
+            mlm_prediction_scores = self.cls(mmt_seq_output)
+            results = {
+                "mmt_seq_output": mmt_seq_output,
+                "scores": mlm_prediction_scores
+            }
+
         return results
 
 

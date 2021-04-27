@@ -5,7 +5,8 @@ from mmf.common.sample import Sample
 from mmf.common.registry import registry
 from mmf.datasets.mmf_dataset import MMFDataset
 from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
-from mmf.utils.text import word_tokenize
+from mmf.utils.text import word_tokenize, mask_tokens
+from transformers.tokenization_auto import AutoTokenizer
 import copy as c
 
 
@@ -14,6 +15,10 @@ class TextVQADataset(MMFDataset):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
+        self.pretrain_mlm = self.config.pretrain.type == 'mlm'
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            'bert-base-uncased', do_lower_case=True
+        )
 
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
@@ -144,6 +149,18 @@ class TextVQADataset(MMFDataset):
             sample.text_len = torch.tensor(
                 len(processed_question["tokens"]), dtype=torch.long
             )
+            if self.pretrain_mlm:
+                input_ids = processed_question["input_ids"].clone().unsqueeze(0)
+                sample.text_mlm, sample.text_mlm_labels = mask_tokens(input_ids,
+                                                                self.tokenizer, self.config.pretrain.mlm_probability)
+                # import pdb; pdb.set_trace()
+                sample.text_mlm = sample.text_mlm.squeeze()
+                sample.text_mlm_labels = sample.text_mlm_labels.squeeze()
+            # print(f'original: {processed_question["input_ids"]}')
+            # print(f'mlm txt: {sample.mlm_txt}')
+            # print(f'mlm label: {sample.mlm_labels}')
+            # import pdb; pdb.set_trace()
+
         else:
             # For GLoVe based processors
             sample.text = processed_question["text"]
@@ -155,6 +172,40 @@ class TextVQADataset(MMFDataset):
             sample.obj_bbox_coordinates = self.copy_processor(
                 {"blob": sample_info["obj_normalized_boxes"]}
             )["blob"]
+        # object text information
+        obj_text_processor_args = {"tokens": sample['image_info_0']['object_tokens']}
+        object_tokens = self.obj_text_processor(obj_text_processor_args)
+        # TODO: tokenize object tokens and convert to indices
+        obj_tokens = sample['image_info_0']['object_tokens']
+        sample.obj_max_features = torch.tensor(len(obj_tokens))
+        sample.obj_bert_context = object_tokens["input_ids"]
+        sample.obj_bert_tokens = object_tokens["tokens"]
+        sample.obj_bert_input_mask = object_tokens["input_mask"]
+        sample.obj_token_map = []
+        temp_obj_bert_subcontext = []
+        cnt = 0; ptr = 1
+        while (cnt < len(obj_tokens)):
+            sample.obj_token_map.append(ptr)
+            tgt_token = obj_tokens[cnt]
+            processed_token = self.obj_text_processor.tokenize(tgt_token)
+            temp_obj_bert_subcontext.append(object_tokens["input_ids"][ptr])
+            ptr += len(processed_token)
+            if ptr >= sample.obj_bert_input_mask.shape[0]:
+                break
+            cnt += 1
+
+        # only probability over first subtoken
+        if self.pretrain_mlm:
+            temp_obj_bert_subcontext = torch.tensor(temp_obj_bert_subcontext)
+            input_ids = temp_obj_bert_subcontext.clone().unsqueeze(0)
+            temp_obj_bert_subcontext_mlm, temp_obj_bert_subcontext_mlm_labels = mask_tokens(input_ids,
+                                                            self.tokenizer, self.config.pretrain.mlm_probability)
+            # map back to normal length
+            sample.obj_bert_context_mlm = sample.obj_bert_context.clone()
+            sample.obj_bert_context_mlm_labels = torch.empty(sample.obj_bert_context_mlm.shape, dtype=torch.long).fill_(-100)
+            for i, t in enumerate(sample.obj_token_map):
+                sample.obj_bert_context_mlm[t] = temp_obj_bert_subcontext_mlm[0][i]
+                sample.obj_bert_context_mlm_labels[t] = temp_obj_bert_subcontext_mlm_labels[0][i]
 
         # 3. Load OCR
         if not self.use_ocr:
@@ -212,15 +263,30 @@ class TextVQADataset(MMFDataset):
                 this_sample.bert_tokens = processed_context["tokens"]
                 this_sample.bert_input_mask = processed_context["input_mask"]
                 this_sample.token_map = []
+                temp_bert_subcontext = []
                 cnt = 0; ptr = 1
                 while(cnt<len(ocr_tokens)):
                     this_sample.token_map.append(ptr)
                     tgt_token = ocr_tokens[cnt]
                     processed_token = self.context_processor.tokenize(tgt_token)
+                    temp_bert_subcontext.append(processed_context["input_ids"][ptr])
                     ptr += len(processed_token)
                     if ptr>= this_sample.bert_input_mask.shape[0]:
                         break
                     cnt+=1
+                # only probability over first subtoken
+                if self.pretrain_mlm:
+                    temp_bert_subcontext = torch.tensor(temp_bert_subcontext, dtype=torch.long)
+                    input_ids = temp_bert_subcontext.clone().unsqueeze(0)
+                    temp_bert_subcontext_mlm, temp_bert_subcontext_mlm_labels = mask_tokens(input_ids,
+                                                                                  self.tokenizer,
+                                                                                  self.config.pretrain.mlm_probability)
+                    # map back to normal length
+                    this_sample.bert_context_mlm = this_sample.bert_context.clone()
+                    this_sample.bert_context_mlm_labels = torch.empty(this_sample.bert_context_mlm.shape).fill_(-100)
+                    for i, t in enumerate(this_sample.token_map):
+                        this_sample.bert_context_mlm[t] = temp_bert_subcontext_mlm[0][i]
+                        this_sample.bert_context_mlm_labels[t] = temp_bert_subcontext_mlm_labels[0][i]
                 #while(len(sample.token_map)<len(ocr_tokens)):
                 #    sample.token_map.append(-1)
             else:
