@@ -15,7 +15,10 @@ class TextVQADataset(MMFDataset):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
-        self.pretrain_mlm = self.config.pretrain.type == 'mlm'
+        if getattr(self.config, "pretrain", False):
+            self.pretrain_mlm = self.config.pretrain.type == 'mlm'
+        else:
+            self.pretrain_mlm = False
         self.tokenizer = AutoTokenizer.from_pretrained(
             'bert-base-uncased', do_lower_case=True
         )
