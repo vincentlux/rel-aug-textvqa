@@ -255,6 +255,20 @@ class Accuracy(BaseMetric):
         value = correct / total
         return value
 
+@registry.register_metric("nothing")
+class Nothing(BaseMetric):
+    """Metric for calculating accuracy.
+
+    **Key:** ``accuracy``
+    """
+
+    def __init__(self):
+        super().__init__("nothing")
+
+    def calculate(self, sample_list, model_output, *args, **kwargs):
+
+        return 0.0
+
 
 @registry.register_metric("caption_bleu4")
 class CaptionBleu4Metric(BaseMetric):

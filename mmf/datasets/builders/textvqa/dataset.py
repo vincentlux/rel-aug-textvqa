@@ -376,7 +376,9 @@ class TextVQADataset(MMFDataset):
         sample.update(answers_to_add)
         sample.answers = object_to_byte_tensor(answers)
 
-        if "answers_scores" in sample:
-            sample.targets = sample.pop("answers_scores")
-
+        if not self.pretrain_mlm:
+            if "answers_scores" in sample:
+                sample.targets = sample.pop("answers_scores")
+        else:
+            sample.targets = 0
         return sample

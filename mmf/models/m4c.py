@@ -174,10 +174,11 @@ class M4C(BaseModel):
         scores = None
         updated_target = None
         mlm_labels = None
-        target_size = sample_list.targets.size()
-        target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
-        updated_loss_mask = None
-        loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
+        if not self.pretrain_mlm:
+            target_size = sample_list.targets.size()
+            target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
+            updated_loss_mask = None
+            loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
         for i in range(sample_list["ocr_source_num"][0]):
             sample_list["current_source"] = i
             self._forward_txt_encoding(sample_list, fwd_results)
@@ -195,32 +196,40 @@ class M4C(BaseModel):
                         mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
             else:
                 if i == 0:
-                    max_conf = fwd_results["conf"]
-                    scores = fwd_results["scores"]
-                    pred_source = torch.zeros_like(max_conf).to(torch.long)
-                    updated_target = target[:, 0]
-                    updated_loss_mask = loss_mask[:, 0]
+                    if self.pretrain_mlm:
+                        scores = fwd_results["scores"]
+                        mlm_labels = fwd_results["mlm_labels"]
+                    else:
+                        max_conf = fwd_results["conf"]
+                        scores = fwd_results["scores"]
+                        pred_source = torch.zeros_like(max_conf).to(torch.long)
+                        updated_target = target[:, 0]
+                        updated_loss_mask = loss_mask[:, 0]
                 else:
-                    current_source = torch.ones_like(pred_source) * i
-                    pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
-                    scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
-                    updated_target = torch.where(
-                        (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
-                        updated_target,
-                        target[:, i])
-                    updated_loss_mask = torch.where(
-                        (max_conf > fwd_results["conf"]).unsqueeze(-1),
-                        updated_loss_mask,
-                        loss_mask[:, i]
-                    )
-                    max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
+                    if self.pretrain_mlm:
+                        scores = torch.cat([scores, fwd_results["scores"]], 1)
+                        mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
+                    else:
+                        current_source = torch.ones_like(pred_source) * i
+                        pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
+                        scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
+                        updated_target = torch.where(
+                            (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
+                            updated_target,
+                            target[:, i])
+                        updated_loss_mask = torch.where(
+                            (max_conf > fwd_results["conf"]).unsqueeze(-1),
+                            updated_loss_mask,
+                            loss_mask[:, i]
+                        )
+                        max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
         # only keep scores in the forward pass results
         #print("in forward:")
         #print("scores:", scores.shape)
         #print("train_loss_mask:", sample_list.train_loss_mask.shape)
         if self.pretrain_mlm:
-            results = {"scores": scores, "mlm_labels": mlm_labels}
+            results = {"mlm_scores": scores, "mlm_labels": mlm_labels}
             return results
 
         if not self.training:
@@ -415,115 +424,117 @@ class M4C(BaseModel):
             ], dim=1)
             fwd_results["mlm_labels"] = mlm_labels
 
-
     def _forward_mmt_and_output(self, sample_list, fwd_results):
-        if self.training:
-            if not self.pretrain_mlm:
-                fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
+        if self.pretrain_mlm:
             self._forward_mmt(sample_list, fwd_results)
             self._forward_output(sample_list, fwd_results)
         else:
-            dec_step_num = sample_list.train_prev_inds.size(-1)
-            # print(self.config.beam_size)
-            fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds[:, sample_list.current_source,:])
-            fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
-            if self.config.beam_size == 1:
-                # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
-
-                # greedy decoding at test time
-                for _ in range(dec_step_num):
-                    self._forward_mmt(sample_list, fwd_results)
-                    self._forward_output(sample_list, fwd_results)
-
-                    # find the highest scoring output (either a fixed vocab
-                    # or an OCR), and add it to prev_inds for auto-regressive
-                    # decoding
-                    argmax_inds = fwd_results["scores"].argmax(dim=-1)
-                    fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
-                fwd_results["conf"] = torch.sum(torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0], -1)
+            if self.training:
+                fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
+                self._forward_mmt(sample_list, fwd_results)
+                self._forward_output(sample_list, fwd_results)
             else:
-                batch_size = sample_list.train_prev_inds.size(0)
-                fwd_results["scores"] = None
-                for sample_id in range(batch_size):
-                    fwd_results_feed = copy.deepcopy(fwd_results)
-                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][sample_id: sample_id + 1, :]
-                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"][sample_id: sample_id + 1, :]
-                    sample_list_feed = sample_list
-                    self._forward_mmt(sample_list_feed, fwd_results_feed)
-                    self._forward_output(sample_list_feed, fwd_results_feed)
-                    top_k_value, top_k_inds = \
-                        F.log_softmax(fwd_results_feed["scores"][:, 0, :], dim=-1) \
-                            .topk(self.config.beam_size)
-                    dead = 0
-                    seq2keep = fwd_results_feed["prev_inds"][0:1, :1]  # beam_size * decoded
-                    seqprob = torch.zeros_like(seq2keep[:, 0]).to(torch.float)  # beam_size
-                    cand_score = []
-                    fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"].repeat(self.config.beam_size, 1, 1)
-                    fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"].repeat(self.config.beam_size, 1, 1)
-                    fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"].repeat(self.config.beam_size, 1)
-                    fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"].repeat(self.config.beam_size, 1)
-                    cand = torch.ones_like(fwd_results_feed["prev_inds"]) * 2
-                    allow_size = self.config.beam_size
-                    for dec_step in range(dec_step_num):
-                        seqprob = seqprob.unsqueeze(-1).repeat(1, allow_size).view(-1)
-                        seqprob += top_k_value.view(-1)  # (beam_size * beam_size)
-                        dec_len = seq2keep.size(1)
-                        seq2keep = seq2keep.repeat(1, allow_size).view(-1, dec_len)
-                        # (beam_size * beam_size) * dec_len
-                        seq2keep = torch.cat([seq2keep, top_k_inds.view(-1, 1)], -1)
-                        beam_k_score, beam_k_inds = seqprob.topk(allow_size)
-                        seq2keep = seq2keep[beam_k_inds]
-                        seqprob = seqprob[beam_k_inds]
-                        nextbatch = torch.zeros_like(fwd_results_feed["prev_inds"])
-                        filled = 0
-                        new_seqprob = seqprob[seqprob.size(0):]
-                        new_seq2keep = seq2keep[seq2keep.size(0):]
-                        for i, seq in enumerate(seq2keep):
-                            if seq[-1] == self.answer_processor.EOS_IDX or dec_step == dec_step_num - 1:
-                                nextbatch = nextbatch[:nextbatch.size(0) - 1]
-                                cand[dead, :seq.size(0)-1] = seq[1:]
-                                cand_score.append(seqprob[i].item() / (seq.size(0) ** self.config.beam_length_penalty))
-                                dead += 1
-                            else:
-                                nextbatch[filled, :seq.size(0)] = seq
-                                new_seqprob = torch.cat([new_seqprob, seqprob[i:i+1]], 0)
-                                new_seq2keep = torch.cat([new_seq2keep, seq2keep[i:i+1]], 0)
-                                filled += 1
-                        assert dead + nextbatch.size(0) == self.config.beam_size
-                        if dead == self.config.beam_size:
-                            break
-                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][:nextbatch.size(0)]
-                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][:nextbatch.size(0)]
-                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][:nextbatch.size(0)]
-                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][:nextbatch.size(0)]
-                        fwd_results_feed["prev_inds"] = nextbatch
-                        seq2keep = new_seq2keep
-                        seqprob = new_seqprob
-                        allow_size = self.config.beam_size - dead
+                dec_step_num = sample_list.train_prev_inds.size(-1)
+                # print(self.config.beam_size)
+                fwd_results["prev_inds"] = torch.zeros_like(sample_list.train_prev_inds[:, sample_list.current_source,:])
+                fwd_results["prev_inds"][:, 0] = self.answer_processor.BOS_IDX
+                if self.config.beam_size == 1:
+                    # fill prev_inds with BOS_IDX at index 0, and zeros elsewhere
+
+                    # greedy decoding at test time
+                    for _ in range(dec_step_num):
+                        self._forward_mmt(sample_list, fwd_results)
+                        self._forward_output(sample_list, fwd_results)
+
+                        # find the highest scoring output (either a fixed vocab
+                        # or an OCR), and add it to prev_inds for auto-regressive
+                        # decoding
+                        argmax_inds = fwd_results["scores"].argmax(dim=-1)
+                        fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
+                    fwd_results["conf"] = torch.sum(torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0], -1)
+                else:
+                    batch_size = sample_list.train_prev_inds.size(0)
+                    fwd_results["scores"] = None
+                    for sample_id in range(batch_size):
+                        fwd_results_feed = copy.deepcopy(fwd_results)
+                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][sample_id: sample_id + 1, :]
+                        fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"][sample_id: sample_id + 1, :]
+                        sample_list_feed = sample_list
                         self._forward_mmt(sample_list_feed, fwd_results_feed)
                         self._forward_output(sample_list_feed, fwd_results_feed)
                         top_k_value, top_k_inds = \
-                            F.log_softmax(fwd_results_feed["scores"][:, dec_step + 1, :], dim=-1) \
-                                .topk(allow_size)
-                    idx = torch.argmax(torch.tensor(cand_score))
-                    fwd_results["prev_inds"][sample_id, :] = cand[idx][:]
-                    scores = torch.zeros_like(fwd_results_feed["scores"][0:1])
-                    for i, word_id in enumerate(cand[idx].view(-1)):
-                        scores[0, i, word_id] = 1.
-                    if fwd_results["scores"] is None:
-                        fwd_results["scores"] = scores
-                    else:
-                        fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
+                            F.log_softmax(fwd_results_feed["scores"][:, 0, :], dim=-1) \
+                                .topk(self.config.beam_size)
+                        dead = 0
+                        seq2keep = fwd_results_feed["prev_inds"][0:1, :1]  # beam_size * decoded
+                        seqprob = torch.zeros_like(seq2keep[:, 0]).to(torch.float)  # beam_size
+                        cand_score = []
+                        fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                        fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"].repeat(self.config.beam_size, 1, 1)
+                        fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"].repeat(self.config.beam_size, 1)
+                        fwd_results_feed["prev_inds"] = fwd_results_feed["prev_inds"].repeat(self.config.beam_size, 1)
+                        cand = torch.ones_like(fwd_results_feed["prev_inds"]) * 2
+                        allow_size = self.config.beam_size
+                        for dec_step in range(dec_step_num):
+                            seqprob = seqprob.unsqueeze(-1).repeat(1, allow_size).view(-1)
+                            seqprob += top_k_value.view(-1)  # (beam_size * beam_size)
+                            dec_len = seq2keep.size(1)
+                            seq2keep = seq2keep.repeat(1, allow_size).view(-1, dec_len)
+                            # (beam_size * beam_size) * dec_len
+                            seq2keep = torch.cat([seq2keep, top_k_inds.view(-1, 1)], -1)
+                            beam_k_score, beam_k_inds = seqprob.topk(allow_size)
+                            seq2keep = seq2keep[beam_k_inds]
+                            seqprob = seqprob[beam_k_inds]
+                            nextbatch = torch.zeros_like(fwd_results_feed["prev_inds"])
+                            filled = 0
+                            new_seqprob = seqprob[seqprob.size(0):]
+                            new_seq2keep = seq2keep[seq2keep.size(0):]
+                            for i, seq in enumerate(seq2keep):
+                                if seq[-1] == self.answer_processor.EOS_IDX or dec_step == dec_step_num - 1:
+                                    nextbatch = nextbatch[:nextbatch.size(0) - 1]
+                                    cand[dead, :seq.size(0)-1] = seq[1:]
+                                    cand_score.append(seqprob[i].item() / (seq.size(0) ** self.config.beam_length_penalty))
+                                    dead += 1
+                                else:
+                                    nextbatch[filled, :seq.size(0)] = seq
+                                    new_seqprob = torch.cat([new_seqprob, seqprob[i:i+1]], 0)
+                                    new_seq2keep = torch.cat([new_seq2keep, seq2keep[i:i+1]], 0)
+                                    filled += 1
+                            assert dead + nextbatch.size(0) == self.config.beam_size
+                            if dead == self.config.beam_size:
+                                break
+                            fwd_results_feed["txt_inds"] = fwd_results_feed["txt_inds"][:nextbatch.size(0)]
+                            fwd_results_feed["txt_mask"] = fwd_results_feed["txt_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["obj_mmt_in"] = fwd_results_feed["obj_mmt_in"][:nextbatch.size(0)]
+                            fwd_results_feed["obj_mask"] = fwd_results_feed["obj_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["ocr_mmt_in"] = fwd_results_feed["ocr_mmt_in"][:nextbatch.size(0)]
+                            fwd_results_feed["ocr_mask"] = fwd_results_feed["ocr_mask"][:nextbatch.size(0)]
+                            fwd_results_feed["prev_inds"] = nextbatch
+                            seq2keep = new_seq2keep
+                            seqprob = new_seqprob
+                            allow_size = self.config.beam_size - dead
+                            self._forward_mmt(sample_list_feed, fwd_results_feed)
+                            self._forward_output(sample_list_feed, fwd_results_feed)
+                            top_k_value, top_k_inds = \
+                                F.log_softmax(fwd_results_feed["scores"][:, dec_step + 1, :], dim=-1) \
+                                    .topk(allow_size)
+                        idx = torch.argmax(torch.tensor(cand_score))
+                        fwd_results["prev_inds"][sample_id, :] = cand[idx][:]
+                        scores = torch.zeros_like(fwd_results_feed["scores"][0:1])
+                        for i, word_id in enumerate(cand[idx].view(-1)):
+                            scores[0, i, word_id] = 1.
+                        if fwd_results["scores"] is None:
+                            fwd_results["scores"] = scores
+                        else:
+                            fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
 
 
     def get_optimizer_parameters(self, config):

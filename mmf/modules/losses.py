@@ -591,6 +591,6 @@ class MlmLoss(nn.Module):
     def forward(self, sample_list, model_output):
         # hack: ground truth is returned from model_output["mlm_labels"]
         # because these labels are generated after final concat in mmt
-        vocab_size = model_output["scores"].shape[-1]
-        mlm_loss = self.loss_fn(model_output["scores"].view(-1, vocab_size), model_output["mlm_labels"].view(-1))
+        vocab_size = model_output["mlm_scores"].shape[-1]
+        mlm_loss = self.loss_fn(model_output["mlm_scores"].view(-1, vocab_size), model_output["mlm_labels"].view(-1))
         return mlm_loss
