@@ -35,11 +35,23 @@ dataset_config:
             params:
               do_lower_case: true
           max_seq_length: 250
+      obj_text_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 100
+
 
 model_config:
   m4c:
     ocr:
       text_embedding: bert
       mmt_in_dim: 3420  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
-      
+      normalize_bert: false
+    obj:
+      mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
+      normalize_bert: false
 

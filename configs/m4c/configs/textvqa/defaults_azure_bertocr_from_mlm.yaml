@@ -22,7 +22,7 @@ dataset_config:
 model_config:
   m4c:
     ocr:
-      normalize_bert: true
+      normalize_bert: false
     obj:
       mmt_in_dim: 2816
-      normalize_bert: true
+      normalize_bert: false

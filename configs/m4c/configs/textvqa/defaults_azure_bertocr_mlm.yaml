@@ -3,7 +3,7 @@ includes:
 
 training:
   batch_size: 16
-  max_updates: 48000
+  max_updates: 72000
   num_workers: 0
   mlflow: true
   evaluation_interval: 2000
@@ -29,16 +29,16 @@ dataset_config:
     - textvqa.ocr_en
     features:
       train:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
       val:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
       test:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb
     annotations:
       train:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,textvqa/defaults/annotations/imdb_train_ocr_en.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy
       val:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy,textvqa/defaults/annotations/imdb_val_ocr_en.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
     processors:
       context_processor:
         type: bert_tokenizer
@@ -64,7 +64,7 @@ model_config:
     ocr:
       text_embedding: bert
       mmt_in_dim: 3420  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
-      normalize_bert: true
+      normalize_bert: false
     obj:
       mmt_in_dim: 2816
-      normalize_bert: true
+      normalize_bert: false
