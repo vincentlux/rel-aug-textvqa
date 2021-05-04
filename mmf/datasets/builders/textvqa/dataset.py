@@ -5,8 +5,9 @@ from mmf.common.sample import Sample
 from mmf.common.registry import registry
 from mmf.datasets.mmf_dataset import MMFDataset
 from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
-from mmf.utils.text import word_tokenize
 from mmf.utils.pos_emb import pos_emb_calculator
+from mmf.utils.text import word_tokenize, mask_tokens
+from transformers.tokenization_auto import AutoTokenizer
 import copy as c
 
 
@@ -17,9 +18,16 @@ class TextVQADataset(MMFDataset):
         self.use_ocr_info = self.config.use_ocr_info
         self.pos_emb_calculator = pos_emb_calculator( 
             Dim=self.config.get("pos_emb_length",20),
-            L=self.config.processors.bbox_processor.params.max_length
+            L=self.config.processors.bbox_processor.params.max_length)
+        if getattr(self.config, "pretrain", False):
+            self.pretrain_mlm = self.config.pretrain.type == 'mlm'
+        else:
+            self.pretrain_mlm = False
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            'bert-base-uncased', do_lower_case=True
         )
 
+    
     def preprocess_sample_info(self, sample_info):
         path = self._get_path_based_on_index(self.config, "annotations", self._index)
         # NOTE, TODO: Code duplication w.r.t to STVQA, revisit
@@ -127,19 +135,22 @@ class TextVQADataset(MMFDataset):
 
     def add_sample_details(self, sample_info, sample):
         sample.image_id = object_to_byte_tensor(sample.image_id)
-        
-        # 1. Load object
+
+        if not self.use_ocr:
+            raise NotImplementedError
+
+        # 1. Load object box information
         # object bounding box information
         if "obj_normalized_boxes" in sample_info and hasattr(self, "copy_processor"):
             sample.obj_bbox_coordinates = self.copy_processor(
                 {"blob": sample_info["obj_normalized_boxes"]}
             )["blob"]
-        
+
         # 2. Load text (question words and ocr tokens)
         # 2.1 Load Question
         # sample.text: processed question tokens, padded
         # sample.text_len: length of processed question
-        question_str = ( sample_info["question"] if "question" in sample_info else sample_info["question_str"])
+        question_str = (sample_info["question"] if "question" in sample_info else sample_info["question_str"])
         
         text_processor_args = {"text": question_str}
         if "question_tokens" in sample_info:
@@ -150,37 +161,56 @@ class TextVQADataset(MMFDataset):
             sample.text = processed_question["input_ids"]
             sample.text_mask = processed_question["input_mask"]
             sample.text_len = torch.tensor(len(processed_question["tokens"]), dtype=torch.long)
+            # print(f'original: {processed_question["input_ids"]}')
+            # print(f'mlm txt: {sample.mlm_txt}')
+            # print(f'mlm label: {sample.mlm_labels}')
+            # import pdb; pdb.set_trace()
         else:
-            # For GLoVe based processors
-            # Zhen: Not sure if supported
+            # For GLoVe based processors, not sure if supported
             raise NotImplementedError
-            '''
-            sample.text = processed_question["text"]
-            sample.text_len = processed_question["length"]
-            '''
+
+        # 2.2 Load Object Text
+
+        # Object text information
+        if "object_tokens" not in sample["image_info_0"]:
+            sample['image_info_0']['object_tokens'] = ["Null" for x in range(sample.obj_bbox_coordinates.shape[0])]
+        obj_text_processor_args = {"tokens": sample['image_info_0']['object_tokens']}
+        object_tokens = self.obj_text_processor(obj_text_processor_args) 
+        # TODO: tokenize object tokens and convert to indices
+        obj_tokens = sample['image_info_0']['object_tokens']
+        sample.obj_max_features = torch.tensor(len(obj_tokens))
+        sample.obj_bert_context = object_tokens["input_ids"]
+        sample.obj_bert_tokens = object_tokens["tokens"]
+        sample.obj_bert_input_mask = object_tokens["input_mask"]
+        sample.obj_bert_context_len = torch.tensor(len(object_tokens["tokens"]), dtype=torch.long)
         
-        if not self.use_ocr:
-            raise NotImplementedError
-            # ZHEN: This is definitely to change
-            '''
-            # remove all OCRs from the sample
-            # (i.e. make an empty OCR list)
-            sample_info["ocr_tokens"] = []
-            sample_info["ocr_info"] = []
-            if "ocr_normalized_boxes" in sample_info:
-                sample_info["ocr_normalized_boxes"] = np.zeros((0, 4), np.float32)
-            # clear OCR visual features
-            if "image_feature_1" in sample:
-                sample.image_feature_1 = torch.zeros_like(sample.image_feature_1)
-            return sample
-            '''
-        # 2.2 Load OCR Data (Multisource)  
+        sample.obj_token_map = []
+        sample.combined_obj_token_map = []
+        temp_obj_bert_subcontext = []
+        cnt = 0; obj_ptr = 1; combined_ptr = len(processed_question["tokens"])
+        while (cnt < len(obj_tokens)):
+            sample.obj_token_map.append(obj_ptr)
+            sample.combined_obj_token_map.append(combined_ptr)
+            tgt_token = obj_tokens[cnt]
+            processed_token = self.obj_text_processor.tokenize(tgt_token)
+            temp_obj_bert_subcontext.append(object_tokens["input_ids"][obj_ptr])
+            obj_ptr += len(processed_token)
+            combined_ptr += len(processed_token)
+            if obj_ptr >= sample.obj_bert_input_mask.shape[0]:
+                break
+            cnt += 1
+        
+        # 2.3 Load OCR Data (Multisource)  
+        ### Sample: contains text info (the question)
+        ### This_sample: contains ocr info (ocr text)
+
         sample.ocr_source_num = self.annotation_db.load_file_num
+        temp_ocr_bert_subcontext = {}
         for current_source in range(self.annotation_db.load_file_num):
             sample.__setattr__(f"ocr_source_{current_source}", Sample())
             this_sample = sample.__getattr__(f"ocr_source_{current_source}")
             
-            # Preprocess OCR tokens
+            # 2.3.1 For each OCR source, preprocess OCR tokens
             if f"ocr_tokens_{current_source}" not in sample_info:
                 ocr_token_source = sample_info[f"ocr_tokens_0"]
             else:
@@ -198,7 +228,7 @@ class TextVQADataset(MMFDataset):
             else:
                 ocr_info = sample_info[f"ocr_info_{current_source}"][:max_len]
 
-            # Get FastText or bert embeddings for OCR tokens
+            # 2.3.2 For each OCR source, get FastText or bert embeddings for OCR tokens
             # sample.ocr_tokens: ocr_tokens after initial token processor
             # sample.context_tokens: ocr_tokens to byte tensor
             # sample.context_feature_0: raw text
@@ -228,42 +258,55 @@ class TextVQADataset(MMFDataset):
                 context_processor_args["tokens"] = ocr_tokens
                 processed_context = self.context_processor(context_processor_args)
                 this_sample.bert_context = processed_context["input_ids"]
-                this_sample.bert_context_mask = processed_context["input_mask"]
+                this_sample.bert_tokens = processed_context["tokens"]
+                this_sample.bert_input_mask = processed_context["input_mask"]
+                #this_sample.bert_context_mask = processed_context["input_mask"]
                 this_sample.bert_context_len = torch.tensor(len(processed_context["tokens"]), dtype=torch.long)
 
-                ### Sample: contains text info (the question)
-                ### This_sample: contains ocr info (ocr text)
+                
                 l_tmax = self.config.processors.text_processor.params.max_seq_length
+                l_omax = self.config.processors.obj_text_processor.params.max_seq_length
                 l_cmax = self.config.processors.context_processor.params.max_seq_length
-                assert sample.text_len<=l_tmax
-                assert this_sample.bert_context_len<=l_cmax
-                l_pad = l_tmax+l_cmax-sample.text_len-this_sample.bert_context_len+1
+                l_t = len(processed_question["tokens"]) # sample.text_len
+                l_o = len(object_tokens["tokens"]) # sample.obj_bert_context_len
+                l_c = len(processed_context["tokens"]) # this_sample.bert_context_len
+                assert l_t <= l_tmax
+                assert l_o <= l_omax
+                assert l_c <= l_cmax
+                l_pad = (l_tmax+l_cmax+l_omax) - (l_t+l_o+l_c) + 2 # We don't include the [CLS] in obj and ocr tokens, so there is total offset of 2
                 this_sample.bert_combined = torch.cat([
-                        sample.text[:sample.text_len], 
-                        this_sample.bert_context[1:this_sample.bert_context_len],
+                        sample.text[:l_t], 
+                        sample.obj_bert_context[1:l_o], 
+                        this_sample.bert_context[1:l_c],
                         torch.zeros(l_pad, dtype=torch.long)])
                 this_sample.bert_combined_mask = torch.cat([
-                        sample.text_mask[:sample.text_len], 
-                        this_sample.bert_context_mask[1:this_sample.bert_context_len],
+                        sample.text_mask[:l_t], 
+                        sample.obj_bert_input_mask[1:l_o], 
+                        this_sample.bert_input_mask[1:l_c],
                         torch.zeros(l_pad,dtype=torch.long)])
                 
+                # Generate the subtokens and map for ocr text
                 this_sample.context_token_map = []
-                this_sample.combined_token_map = []
-                cnt = 0; context_ptr = 1; combined_ptr = len(processed_question["tokens"])
+                this_sample.combined_context_token_map = []
+                temp_ocr_bert_subcontext[current_source] = []
+                cnt = 0; context_ptr = 1; combined_ptr = l_t+l_o-1
                 while(cnt<len(ocr_tokens)):
                     this_sample.context_token_map.append(context_ptr)
-                    this_sample.combined_token_map.append(combined_ptr)
+                    this_sample.combined_context_token_map.append(combined_ptr)
                     tgt_token = ocr_tokens[cnt]
                     processed_token = self.context_processor.tokenize(tgt_token)
+                    temp_ocr_bert_subcontext[current_source].append(processed_context["input_ids"][context_ptr])
                     context_ptr += len(processed_token)
                     combined_ptr += len(processed_token)
-                    if context_ptr>= this_sample.bert_context_mask.shape[0]:
+                    if context_ptr>= this_sample.bert_input_mask.shape[0]:
                         break
                     cnt+=1
+                
                 while(len(this_sample.context_token_map)<len(ocr_tokens)):
                     this_sample.context_token_map.append(l_cmax-1)
-                while(len(this_sample.combined_token_map)<len(ocr_tokens)):
-                    this_sample.combined_token_map.append(l_tmax+l_cmax-1)
+                while(len(this_sample.combined_context_token_map)<len(ocr_tokens)):
+                    this_sample.combined_context_token_map.append(l_tmax+l_omax+l_cmax-1)
+
             else:
                 raise NotImplementedError
 
@@ -312,6 +355,46 @@ class TextVQADataset(MMFDataset):
                     {"info": sample_info[info_key]}
                 )["bbox"].coordinates
                 '''
+
+
+        if self.pretrain_mlm:
+            # Question text
+            if not "input_ids" in processed_question:
+                raise NotImplementedError
+            input_ids = processed_question["input_ids"].clone().unsqueeze(0)
+            sample.text_mlm, sample.text_mlm_labels = mask_tokens(input_ids,
+                                                            self.tokenizer, self.config.pretrain.mlm_probability)
+            # import pdb; pdb.set_trace()
+            sample.text_mlm = sample.text_mlm.squeeze()
+            sample.text_mlm_labels = sample.text_mlm_labels.squeeze()
+            
+            # Object Text
+            temp_obj_bert_subcontext = torch.tensor(temp_obj_bert_subcontext)
+            input_ids = temp_obj_bert_subcontext.clone().unsqueeze(0)
+            temp_obj_bert_subcontext_mlm, temp_obj_bert_subcontext_mlm_labels = mask_tokens(input_ids,
+                                                            self.tokenizer, self.config.pretrain.mlm_probability)
+            # map back to normal length
+            sample.obj_bert_context_mlm = sample.obj_bert_context.clone()
+            sample.obj_bert_context_mlm_labels = torch.empty(sample.obj_bert_context_mlm.shape, dtype=torch.long).fill_(-100)
+            for i, t in enumerate(sample.obj_token_map):
+                sample.obj_bert_context_mlm[t] = temp_obj_bert_subcontext_mlm[0][i]
+                sample.obj_bert_context_mlm_labels[t] = temp_obj_bert_subcontext_mlm_labels[0][i] 
+            
+            for current_source in range(self.annotation_db.load_file_num):
+                this_sample = sample.__getattr__(f"ocr_source_{current_source}")
+                temp_ocr_bert_subcontext_tensor = torch.tensor(temp_ocr_bert_subcontext[current_source], dtype=torch.long)
+                input_ids = temp_ocr_bert_subcontext_tensor.clone().unsqueeze(0)
+                temp_ocr_bert_subcontext_mlm, temp_ocr_bert_subcontext_mlm_labels = mask_tokens(input_ids,
+                                                                                self.tokenizer,
+                                                                                self.config.pretrain.mlm_probability)
+                # map back to normal length
+                this_sample.bert_context_mlm = this_sample.bert_context.clone()
+                this_sample.bert_context_mlm_labels = torch.empty(this_sample.bert_context_mlm.shape).fill_(-100)
+                for i, t in enumerate(this_sample.token_map):
+                    this_sample.bert_context_mlm[t] = temp_ocr_bert_subcontext_mlm[0][i]
+                    this_sample.bert_context_mlm_labels[t] = temp_ocr_bert_subcontext_mlm_labels[0][i]
+
+
         return sample
 
     def add_answer_info(self, sample_info, sample):
@@ -357,7 +440,9 @@ class TextVQADataset(MMFDataset):
         sample.update(answers_to_add)
         sample.answers = object_to_byte_tensor(answers)
 
-        if "answers_scores" in sample:
-            sample.targets = sample.pop("answers_scores")
-
+        if not self.pretrain_mlm:
+            if "answers_scores" in sample:
+                sample.targets = sample.pop("answers_scores")
+        else:
+            sample.targets = 0
         return sample
