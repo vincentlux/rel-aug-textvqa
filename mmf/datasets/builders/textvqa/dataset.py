@@ -145,6 +145,10 @@ class TextVQADataset(MMFDataset):
             sample.obj_bbox_coordinates = self.copy_processor(
                 {"blob": sample_info["obj_normalized_boxes"]}
             )["blob"]
+        if "obj_normalized_boxes_oscar" in sample_info and hasattr(self, "copy_processor"):
+            sample.obj_bbox_coordinates_oscar = self.copy_processor(
+                {"blob": sample_info["obj_normalized_boxes_oscar"]}
+            )["blob"]
 
         # 2. Load text (question words and ocr tokens)
         # 2.1 Load Question
@@ -336,16 +340,22 @@ class TextVQADataset(MMFDataset):
                 )["blob"][:max_len]
             
             # OCR bounding box information
+            oscar_box_key = None
             if f"ocr_normalized_boxes_{current_source}" not in sample_info:
                 box_key = f"ocr_normalized_boxes_0"
+                if "ocr_normalized_boxes_oscar_0" in sample_info:
+                    oscar_box_key = "ocr_normalized_boxes_oscar_0"
             else:
                 box_key = f"ocr_normalized_boxes_{current_source}"
+                if f"ocr_normalized_boxes_oscar_{current_source}" in sample_info:
+                    oscar_box_key = f"ocr_normalized_boxes_oscar_{current_source}"
 
             if box_key in sample_info and hasattr(self, "copy_processor"):
                 # New imdb format: OCR bounding boxes are already pre-computed
                 this_sample.ocr_bbox_coordinates = self.copy_processor(
                     {"blob": sample_info[box_key]}
                 )["blob"][:max_len]
+                # add oscar feature
             elif self.use_ocr_info and info_key in sample_info:
                 # Old imdb format: OCR bounding boxes are computed on-the-fly
                 # from ocr_info
@@ -355,7 +365,10 @@ class TextVQADataset(MMFDataset):
                     {"info": sample_info[info_key]}
                 )["bbox"].coordinates
                 '''
-
+            if oscar_box_key in sample_info and hasattr(self, "copy_processor"):
+                this_sample.ocr_bbox_coordinates_oscar = self.copy_processor(
+                    {"blob": sample_info[oscar_box_key]}
+                )["blob"][:max_len]
 
         if self.pretrain_mlm:
             # Question text

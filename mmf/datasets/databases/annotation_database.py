@@ -103,14 +103,23 @@ class AnnotationDatabase(torch.utils.data.Dataset):
             if "image_id" not in self.data[0]:
                 self.start_idx = 1
 
+        if "ocr_normalized_boxes_oscar" in self.data[self.start_idx]:
+            load_oscar = True
+        else:
+            load_oscar = False
         for i in trange(self.start_idx, len(self.data)):
             self.data[i][f"ocr_info_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_info"])
             self.data[i][f"ocr_tokens_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_tokens"])
             self.data[i][f"ocr_normalized_boxes_{self.load_file_num}"] = copy.deepcopy(self.data[i]["ocr_normalized_boxes"])
+            if load_oscar:
+                self.data[i][f"ocr_normalized_boxes_oscar_{self.load_file_num}"] = copy.deepcopy(
+                        self.data[i]["ocr_normalized_boxes_oscar"])
+                self.data[i].pop("ocr_normalized_boxes_oscar")
 
             self.data[i].pop("ocr_info")
             self.data[i].pop("ocr_tokens")
             self.data[i].pop("ocr_normalized_boxes")
+
 
         if len(self.data) == 0:
             self.data = self.db
@@ -132,11 +141,17 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
         id2idx = {self.data[i]["question"]+self.data[i]["image_id"]: i for i in range(self.start_idx, len(self.data))}
 
+        if "ocr_normalized_boxes_oscar" in new_data[new_start_idx]:
+            load_oscar = True
+        else:
+            load_oscar = False
         for i in trange(new_start_idx, len(new_data)):
             idx = id2idx[new_data[i]["question"]+new_data[i]["image_id"]]
             self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
             self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
             self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]
+            if load_oscar:
+                self.data[idx][f"ocr_normalized_boxes_oscar_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes_oscar"]
 
         self.load_file_num += 1
 

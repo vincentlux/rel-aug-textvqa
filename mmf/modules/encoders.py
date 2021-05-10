@@ -12,7 +12,7 @@ import torch
 import torchvision
 from mmf.common.registry import registry
 from mmf.modules.embeddings import ProjectionEmbedding, TextEmbedding
-from mmf.modules.hf_layers import BertModelJit
+# from mmf.modules.hf_layers import BertModelJit
 from mmf.modules.layers import Identity
 from mmf.utils.build import build_image_encoder, build_text_encoder
 from mmf.utils.download import download_pretrained_model

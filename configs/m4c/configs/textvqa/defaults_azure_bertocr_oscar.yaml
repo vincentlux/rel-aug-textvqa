@@ -4,7 +4,9 @@ includes:
 training:
   num_workers: 0
   mlflow: true
-  #evaluation_interval: 2
+  batch_size: 24
+  max_updates: 48000
+  evaluation_interval: 1000
 
 dataset_config:
   textvqa:
@@ -34,7 +36,7 @@ dataset_config:
             type: bert-base-uncased
             params:
               do_lower_case: true
-          max_seq_length: 250
+          max_seq_length: 200
       obj_text_processor:
         type: bert_tokenizer
         params:
@@ -42,20 +44,29 @@ dataset_config:
             type: bert-base-uncased
             params:
               do_lower_case: true
-          max_seq_length: 100
+          max_seq_length: 70
     use_ocr_word_position: true
     pos_emb_length: 20
 
 
 model_config:
-  m4c:
+  m4c_oscar:
+    from_pretrained: true
+    use_txtocr_output: true
+    num_hidden_layers: 4
     ocr:
       encode_concat: true
       remove_ocr_posemb: false
       text_embedding: bert
-      mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
+      mmt_in_dim: 3486  # 604 (PHOC) + 2048 (Faster R-CNN) + 60 (posemb) + 6 (oscar pos) + 768 (text)
       normalize_bert: false
     obj:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
       normalize_bert: false
 
+optimizer:
+  params:
+    eps: 1.0e-08
+    lr: 1e-4
+    weight_decay: 0.0
+  type: Adam
