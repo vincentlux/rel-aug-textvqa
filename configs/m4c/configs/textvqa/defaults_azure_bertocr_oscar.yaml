@@ -4,7 +4,7 @@ includes:
 training:
   num_workers: 0
   mlflow: true
-  batch_size: 24
+  batch_size: 32
   max_updates: 48000
   evaluation_interval: 1000
 
@@ -51,14 +51,16 @@ dataset_config:
 
 model_config:
   m4c_oscar:
+    oscar_path: "data/base-vg-labels/ep_107_1192087"
     from_pretrained: true
-    use_txtocr_output: true
+    mmt_arch: true # use previous architecture but oscar weights if from_pretrained=true
+    use_txtocr_output: false
     num_hidden_layers: 4
     ocr:
       encode_concat: true
       remove_ocr_posemb: false
       text_embedding: bert
-      mmt_in_dim: 3486  # 604 (PHOC) + 2048 (Faster R-CNN) + 60 (posemb) + 6 (oscar pos) + 768 (text)
+      mmt_in_dim: 3480  # 604 (PHOC) + 2048 (Faster R-CNN) + 60 (posemb) + 6 (oscar pos) + 768 (text)
       normalize_bert: false
     obj:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)

@@ -174,7 +174,7 @@ class M4COscar(BaseModel):
         self.ocr_drop = nn.Dropout(self.config.ocr.dropout_prob)
 
     def _build_mmtoscar(self):
-        model_path = "data/base-vg-labels/ep_67_588997"
+        model_path = self.config.oscar_path
         config = BertConfig.from_pretrained(
             model_path,
             num_labels=2,
@@ -189,6 +189,7 @@ class M4COscar(BaseModel):
         config.ocr_mmt_in_dim = self.config.ocr.mmt_in_dim
         config.from_pretrained = self.config.from_pretrained
         config.use_txtocr_output = self.config.use_txtocr_output
+        config.mmt_arch = self.config.mmt_arch
 
         config.num_hidden_layers = self.config.num_hidden_layers
 
@@ -370,16 +371,15 @@ class M4COscar(BaseModel):
                         -100)
 
                 for i in range(s[0]):
-                    # text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]],
-                    #                        (0, 0, 0, l_q - sample_list.text_len[i]), "constant", 0)  # [bs,l_q,L(rep)]
-                    # obj_map_ls = sample_list.combined_obj_token_map[i][:m_o]
-                    # obj_token_rep = F.pad(combined_rawtextemb[i], (0, 0, 0, max(0, m_o - len(combined_rawtextemb[i]))),
-                    #                       "constant", 0)
-
+                    text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]],
+                                           (0, 0, 0, l_q - sample_list.text_len[i]), "constant", 0)  # [bs,l_q,L(rep)]
+                    obj_map_ls = sample_list.combined_obj_token_map[i][:m_o]
+                    obj_token_rep = F.pad(combined_rawtextemb[i][obj_map_ls], (0, 0, 0, max(0, m_o - len(obj_map_ls))),
+                                          "constant", 0)
                     ocr_map_ls = current_source.combined_context_token_map[i][:m_c]
                     ocr_token_rep = F.pad(combined_rawtextemb[i][ocr_map_ls],(0,0,0,m_c-len(ocr_map_ls)),"constant",0)
-                    # text_cat_ls.append(text_token_rep)
-                    # objtext_cat_ls.append(obj_token_rep)
+                    text_cat_ls.append(text_token_rep)
+                    objtext_cat_ls.append(obj_token_rep)
                     context_cat_ls.append(ocr_token_rep)
                     if self.pretrain_mlm:
                         map_ls = sample_list.obj_token_map[i][:m_o]
@@ -387,16 +387,14 @@ class M4COscar(BaseModel):
                         map_ls = current_source.context_token_map[i][:m_c]
                         ocr_textemb_labels[i, :len(map_ls)] = fwd_results["ocr_token_inds_labels"][i][map_ls]
 
-                # fwd_results["text_bert_out"] = torch.stack(text_cat_ls, dim=0)
-                # fwd_results["obj_textemb"] = torch.stack(objtext_cat_ls, dim=0)
-
-                fwd_results["combined_rawtextemb"] = combined_rawtextemb
-                fwd_results["combined_rawtextemb_mask"] = current_source.bert_combined_mask
-                # for decoding purposes
+                fwd_results["text_bert_out"] = torch.stack(text_cat_ls, dim=0)
+                fwd_results["obj_textemb"] = torch.stack(objtext_cat_ls, dim=0)
                 fwd_results["ocr_textemb"] = torch.stack(context_cat_ls, dim=0)
-                # for extracting mmt_ocr_output in MMT
-                fwd_results["ocr_map_ls"] = current_source.combined_context_token_map
-
+                if not self.config.mmt_arch:
+                    fwd_results["combined_rawtextemb"] = combined_rawtextemb
+                    fwd_results["combined_rawtextemb_mask"] = current_source.bert_combined_mask
+                    # for extracting mmt_ocr_output in MMT
+                    fwd_results["ocr_map_ls"] = current_source.combined_context_token_map
 
                 if self.pretrain_mlm:
                     fwd_results["obj_bert_context_mlm_labels"] = obj_textemb_labels
@@ -455,16 +453,24 @@ class M4COscar(BaseModel):
     def _forward_obj_encoding(self, sample_list, fwd_results):
         # object appearance feature: Faster R-CNN fc7
         obj_fc6 = sample_list.image_feature_0
-        # obj_fc7 = self.obj_faster_rcnn_fc7(obj_fc6)
-        # obj_fc7 = F.normalize(obj_fc7, dim=-1)
-        #
-        # obj_feat = torch.cat(
-        #     [fwd_results["obj_textemb"], obj_fc7], dim=-1
-        # )
+        # TODO: revert these when mmt_arch=true
+        if self.config.mmt_arch:
+            obj_fc7 = self.obj_faster_rcnn_fc7(obj_fc6)
+            obj_fc7 = F.normalize(obj_fc7, dim=-1)
 
-        # obj_feat = obj_fc7
-        obj_bbox = sample_list.obj_bbox_coordinates_oscar
-        obj_mmt_in = torch.cat([obj_fc6, obj_bbox], dim=-1)
+            obj_feat = torch.cat(
+                [fwd_results["obj_textemb"], obj_fc7], dim=-1
+            )
+
+            # obj_feat = obj_fc7
+            obj_bbox = sample_list.obj_bbox_coordinates
+            obj_mmt_in = self.obj_feat_layer_norm(
+                self.linear_obj_feat_to_mmt_in(obj_feat)
+            ) + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(obj_bbox))
+            obj_mmt_in = self.obj_drop(obj_mmt_in)
+        else:
+            obj_bbox = sample_list.obj_bbox_coordinates_oscar
+            obj_mmt_in = torch.cat([obj_fc6, obj_bbox], dim=-1)
         # obj_mmt_in = self.obj_feat_layer_norm(
         #     self.linear_obj_feat_to_mmt_in(obj_feat)
         # ) + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(obj_bbox))
@@ -487,41 +493,51 @@ class M4COscar(BaseModel):
         # OCR appearance feature: Faster R-CNN fc7
         image_source = sample_list[f"image_feature_{current_ocr_source_id + 1}"]
         ocr_fc6 = image_source[:, : fwd_results["ocr_textemb"].size(1), :]
-        # ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
-        # ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
-        #
-        ocr_bbox = current_source.ocr_bbox_coordinates_oscar
 
-        if self.remove_ocr_phoc:
-            ocr_phoc = torch.zeros_like(ocr_phoc)
+        if self.config.mmt_arch:
+            ocr_fc7 = self.ocr_faster_rcnn_fc7(ocr_fc6)
+            ocr_fc7 = F.normalize(ocr_fc7, dim=-1)
 
-        # if self.remove_ocr_frcn:
-        #     ocr_fc7 = torch.zeros_like(ocr_fc7)
-        # ocr_feat = torch.cat(
-        #     [fwd_results["ocr_textemb"], ocr_phoc, ocr_fc7], dim=-1
-        # )
+            if self.remove_ocr_phoc:
+                ocr_phoc = torch.zeros_like(ocr_phoc)
+            if self.remove_ocr_frcn:
+                ocr_fc7 = torch.zeros_like(ocr_fc7)
+            ocr_feat = torch.cat(
+                [fwd_results["ocr_textemb"], ocr_phoc, ocr_fc7], dim=-1
+            )
+            if not self.remove_ocr_posemb:
+                ocr_feat = torch.cat(
+                    [ocr_feat, current_source.ocr_pos_emb], dim=-1
+                )
 
-        # TODO: try different feature concat
-        # TODO: fix dim
-        ocr_posemb = current_source.ocr_pos_emb
-        if self.remove_ocr_posemb:
-            ocr_posemb = torch.zeros_like(ocr_posemb)
+            ocr_bbox = current_source.ocr_bbox_coordinates
+            if self.remove_ocr_semantics:
+                ocr_feat = torch.zeros_like(ocr_feat)
+            if self.remove_ocr_bbox:
+                ocr_bbox = torch.zeros_like(ocr_bbox)
+            ocr_mmt_in = self.ocr_feat_layer_norm(
+                self.linear_ocr_feat_to_mmt_in(ocr_feat)
+            ) + self.ocr_bbox_layer_norm(self.linear_ocr_bbox_to_mmt_in(ocr_bbox))
+            ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
 
-        # 2048+6+604+20
-        ocr_mmt_in = torch.cat(
-            [ocr_fc6, ocr_bbox, ocr_phoc, ocr_posemb], dim=-1
-        )
-        # change back to 2054
-        # ocr_mmt_in = self.linear_ocr_to_mmt_in(ocr_mmt_in.float())
+        else:
+            ocr_bbox = current_source.ocr_bbox_coordinates_oscar
 
-        if self.remove_ocr_semantics:
-            ocr_mmt_in = torch.zeros_like(ocr_mmt_in)
-        # if self.remove_ocr_bbox:
-        #     ocr_bbox = torch.zeros_like(ocr_bbox)
-        # ocr_mmt_in = self.ocr_feat_layer_norm(
-        #     self.linear_ocr_feat_to_mmt_in(ocr_feat)
-        # ) + self.ocr_bbox_layer_norm(self.linear_ocr_bbox_to_mmt_in(ocr_bbox))
-        # ocr_mmt_in = self.ocr_drop(ocr_mmt_in)
+            if self.remove_ocr_phoc:
+                ocr_phoc = torch.zeros_like(ocr_phoc)
+
+            ocr_posemb = current_source.ocr_pos_emb
+            if self.remove_ocr_posemb:
+                ocr_posemb = torch.zeros_like(ocr_posemb)
+
+            # 2048+6+604+20
+            ocr_mmt_in = torch.cat(
+                [ocr_fc6, ocr_bbox, ocr_phoc, ocr_posemb], dim=-1
+            )
+
+            if self.remove_ocr_semantics:
+                ocr_mmt_in = torch.zeros_like(ocr_mmt_in)
+
         fwd_results["ocr_mmt_in"] = ocr_mmt_in
 
         # binary mask of valid OCR vs padding
@@ -530,21 +546,38 @@ class M4COscar(BaseModel):
 
     def _forward_mmt(self, sample_list, fwd_results):
         # first forward the text BERT layers
-        # fwd_results["txt_emb"] = self.text_bert_out_linear(fwd_results["text_bert_out"])
-        # fwd_results["txt_mask"] = sample_list.text_mask
-        mmt_results = self.mmtoscar(
-            txt_emb=fwd_results["combined_rawtextemb"],
-            txt_mask=fwd_results["combined_rawtextemb_mask"],
-            ocr_txt_emb=fwd_results["ocr_textemb"],
-            obj_emb=fwd_results["obj_mmt_in"],
-            obj_mask=fwd_results["obj_mask"],
-            ocr_emb=fwd_results["ocr_mmt_in"],
-            ocr_mask=fwd_results["ocr_mask"],
-            ocr_map=fwd_results["ocr_map_ls"],
-            fixed_ans_emb=self.classifier.module.weight,
-            prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
-            pretrain_mlm=self.pretrain_mlm,
-        )
+
+        if self.config.mmt_arch:
+            fwd_results["txt_emb"] = self.text_bert_out_linear(fwd_results["text_bert_out"])
+            fwd_results["txt_mask"] = sample_list.text_mask
+            mmt_results = self.mmtoscar(
+                txt_emb=fwd_results["txt_emb"],
+                txt_mask=fwd_results["txt_mask"],
+                ocr_txt_emb=None,
+                obj_emb=fwd_results["obj_mmt_in"],
+                obj_mask=fwd_results["obj_mask"],
+                ocr_emb=fwd_results["ocr_mmt_in"],
+                ocr_mask=fwd_results["ocr_mask"],
+                ocr_map=None,
+                fixed_ans_emb=self.classifier.module.weight,
+                prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
+                pretrain_mlm=self.pretrain_mlm,
+            )
+
+        else:
+            mmt_results = self.mmtoscar(
+                txt_emb=fwd_results["combined_rawtextemb"],
+                txt_mask=fwd_results["combined_rawtextemb_mask"],
+                ocr_txt_emb=fwd_results["ocr_textemb"],
+                obj_emb=fwd_results["obj_mmt_in"],
+                obj_mask=fwd_results["obj_mask"],
+                ocr_emb=fwd_results["ocr_mmt_in"],
+                ocr_mask=fwd_results["ocr_mask"],
+                ocr_map=fwd_results["ocr_map_ls"],
+                fixed_ans_emb=self.classifier.module.weight,
+                prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
+                pretrain_mlm=self.pretrain_mlm,
+            )
         fwd_results.update(mmt_results)
 
     def _forward_output(self, sample_list, fwd_results):
@@ -754,10 +787,7 @@ class MMTOscar(BertImgModel):
         super().__init__(config)
         self.prev_pred_embeddings = PrevPredEmbeddings(config)
         self.embeddings = BertEmbeddings(config)
-        if self.config.from_pretrained:
-            self.encoder = CaptionBertEncoder(config)
-        else:
-            self.encoder = CaptionBertEncoder(config)
+        self.encoder = CaptionBertEncoder(config)
 
         self.img_dim = config.img_feature_dim
         logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
@@ -769,6 +799,9 @@ class MMTOscar(BertImgModel):
         self.ocr_embedding = nn.Linear(self.config.ocr_mmt_in_dim, self.config.hidden_size)
 
         self.use_txtocr_output = self.config.use_txtocr_output
+
+        self.mmt_arch = self.config.mmt_arch
+
         self.init_weights()
 
     def forward(
@@ -810,19 +843,19 @@ class MMTOscar(BertImgModel):
             # img_embedding_output = self.img_embedding(img_feats.float())
             # # add dropout on image embedding
             # img_emb = self.dropout(img_embedding_output)
-            obj_embedding_output = self.img_embedding(obj_emb.float())
-            obj_emb = self.dropout(obj_embedding_output)
+            if not self.mmt_arch:   # new way (worse)
+                obj_embedding_output = self.img_embedding(obj_emb.float())
+                obj_emb = self.dropout(obj_embedding_output)
 
-            ocr_combined = torch.cat([ocr_txt_emb, ocr_emb], dim=-1)
-            ocr_embedding_output = self.ocr_embedding(ocr_combined.float())
-            ocr_emb = self.dropout(ocr_embedding_output)
+                ocr_combined = torch.cat([ocr_txt_emb, ocr_emb], dim=-1)
+                ocr_embedding_output = self.ocr_embedding(ocr_combined.float())
+                ocr_emb = self.dropout(ocr_embedding_output)
 
             if not pretrain_mlm:
                 # build embeddings for predictions in previous decoding steps
                 # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
                 # NOTE: here ocr_txt_emb is simply bert embeddings without any transformer layers
-                # TODO: try first passing ocr_txt_emb through a transformer layer
-                # consider concat ocr_txt_emb with ocr_emb
+
                 dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
 
                 # a zero mask for decoding steps, so the encoding steps elements can't
@@ -896,7 +929,6 @@ class MMTOscar(BertImgModel):
 
             if not pretrain_mlm:
                 mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
-                # mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
                 mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
                 if self.use_txtocr_output:
                     # use ocr map same as how we get ocr_txt_emb
