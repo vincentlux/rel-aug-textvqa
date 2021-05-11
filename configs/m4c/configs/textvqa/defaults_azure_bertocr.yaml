@@ -4,28 +4,29 @@ includes:
 training:
   num_workers: 0
   mlflow: true
-  #evaluation_interval: 2
+  batch_size: 16
+  evaluation_interval: 2000
 
 dataset_config:
   textvqa:
     use_images: false
     use_features: true
     max_features: 100
-    zoo_requirements:
-    - textvqa.defaults
-    - textvqa.ocr_en
+    #zoo_requirements:
+    #- textvqa.defaults
+    #- textvqa.ocr_en
     features:
       train:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure-unsorted/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       val:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure-unsorted/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       test:
-      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure-unsorted/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
     annotations:
       train:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted.npy,textvqa/defaults/annotations/imdb_train_ocr_en.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy
       val:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted.npy,textvqa/defaults/annotations/imdb_val_ocr_en.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy
     processors:
       context_processor:
         type: bert_tokenizer
