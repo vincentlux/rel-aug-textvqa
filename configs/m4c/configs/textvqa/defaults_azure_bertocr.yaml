@@ -2,9 +2,10 @@ includes:
 - ./defaults.yaml
 
 training:
+  seed: 37796327
   num_workers: 0
   mlflow: true
-  batch_size: 16
+  batch_size: 32
   evaluation_interval: 2000
 
 dataset_config:

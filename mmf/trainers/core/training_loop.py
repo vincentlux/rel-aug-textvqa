@@ -55,7 +55,8 @@ class TrainerTrainingLoopMixin(ABC):
                 joint_train_mode = registry.get("joint_train_mode")
                 current_epoch_mode = "textvqa" if self.current_epoch % 2 == 0 else joint_train_mode
                 registry.register("current_epoch_mode", current_epoch_mode)
-
+            else:
+                registry.register("current_epoch_mode", "textvqa")
             # Seed the sampler in case if it is distributed
             self.dataset_loader.seed_sampler("train", self.current_epoch)
 
