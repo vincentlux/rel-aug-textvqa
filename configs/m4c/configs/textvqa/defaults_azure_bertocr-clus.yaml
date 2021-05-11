@@ -1,0 +1,47 @@
+includes:
+- ./defaults.yaml
+
+training:
+  num_workers: 3
+
+dataset_config:
+  textvqa:
+    use_images: false
+    use_features: true
+    use_ocr_word_position: true
+    pos_emb_length: 20
+    max_features: 100
+    zoo_requirements:
+    - textvqa.defaults
+    - textvqa.ocr_en
+    features:
+      train:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure-clus/features/ocr_azure-clus_frcn_features.lmdb
+      val:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure-clus/features/ocr_azure-clus_frcn_features.lmdb
+      test:
+      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure-clus/features/ocr_azure-clus_frcn_features.lmdb
+    annotations:
+      train:
+      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-sorted.npy
+      val:
+      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-sorted.npy
+    processors:
+      context_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 250
+
+model_config:
+  m4c:
+    ocr:
+      encode_concat: true
+      remove_ocr_posemb: false
+      text_embedding: bert
+      mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 60 (position)
+      
+

@@ -589,3 +589,19 @@ class CrossEntropyLoss(nn.Module):
         if joint_train_mode is not None and current_epoch_mode == joint_train_mode:  # not textvqa
             return self.loss_fn(model_output["scores"], sample_list.targets)
         return 0.0
+
+
+@registry.register_loss("mlm")
+class MlmLoss(nn.Module):
+    def __init__(self, params=None):
+        super().__init__()
+        if params is None:
+            params = {}
+        self.loss_fn = nn.CrossEntropyLoss(**params)
+
+    def forward(self, sample_list, model_output):
+        # hack: ground truth is returned from model_output["mlm_labels"]
+        # because these labels are generated after final concat in mmt
+        vocab_size = model_output["mlm_scores"].shape[-1]
+        mlm_loss = self.loss_fn(model_output["mlm_scores"].view(-1, vocab_size), model_output["mlm_labels"].view(-1))
+        return mlm_loss

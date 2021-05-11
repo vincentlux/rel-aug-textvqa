@@ -43,7 +43,6 @@ class TrainerEvaluationLoopMixin(ABC):
                         report, self.metrics.required_params
                     )
                     combined_report.batch_size += report.batch_size
-
                 if single_batch is True:
                     break
 
@@ -69,6 +68,7 @@ class TrainerEvaluationLoopMixin(ABC):
                     prepared_batch = to_device(prepared_batch, torch.device("cuda"))
                     with torch.cuda.amp.autocast(enabled=self.training_config.fp16):
                         model_output = self.model(prepared_batch)
+
                     report = Report(prepared_batch, model_output)
                     reporter.add_to_report(report, self.model)
 

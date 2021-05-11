@@ -20,11 +20,13 @@ def dict_to_lmdb(out_path, dict_to_save):
 
 if __name__ == '__main__':
     # load npy file to get filename
-    file_path = "/bos/tmp6/zhenfan/VQA/data/TextVQA/OCR/AzureOCR/"
-    train_npy_path = f"{file_path}imdb_train_ocr_azure.npy"
-    val_npy_path = f"{file_path}imdb_val_ocr_azure.npy"
-    base_feat_path = f"{file_path}train_images_ocr_frcnn/"
-    save_lmdb_name = f"{file_path}ocr_azure_frcn_features.lmdb"
+    file_path1 = "/bos/tmp6/zhenfan/VQA/data/data/datasets/textvqa/"
+    file_path2 = "/bos/tmp6/zhenfan/VQA/TextVQA_orig/"
+    train_npy_path = f"{file_path1}defaults/annotations/imdb_train_ocr_azure-clus.npy"
+    val_npy_path = f"{file_path1}defaults/annotations/imdb_val_ocr_azure-clus.npy"
+    
+    base_feat_path = f"{file_path2}OCR/AzureOCR_clus/train_images_ocr_frcnn/"
+    save_lmdb_name = f"{file_path1}ocr_azure-clus/features/ocr_azure-clus_frcn_features.lmdb"
     
     train_info = np.load(train_npy_path, allow_pickle=True)[1:]
     val_info = np.load(val_npy_path, allow_pickle=True)[1:]

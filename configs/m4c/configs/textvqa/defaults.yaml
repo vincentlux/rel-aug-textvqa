@@ -60,7 +60,7 @@ dataset_config:
     return_features_info: true
     use_ocr: true
     use_ocr_info: true
-    use_order_vectors: true
+    use_order_vectors: false
 
 optimizer:
   params:
@@ -85,7 +85,7 @@ training:
     use_warmup: true
     warmup_factor: 0.2
     warmup_iterations: 1000
-    max_updates: 24000
+    max_updates: 48000
     batch_size: 32
     num_workers: 1
     task_size_proportional_sampling: true

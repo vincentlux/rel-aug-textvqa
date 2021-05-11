@@ -25,5 +25,5 @@ model_config:
     model_data_dir: ${env.data_dir}
     losses:
     - type: m4c_decoding_bce_with_mask
-    beam_size: 10
+    beam_size: 1
     beam_length_penalty: 0.3

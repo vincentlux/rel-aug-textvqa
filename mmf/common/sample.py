@@ -122,11 +122,13 @@ class SampleList(OrderedDict):
                     and len(sample[field].size()) != 0
                     and sample[field].size(0) != samples[0][field].size(0)
                 ):
+                    print(sample[field].size())
+                    print(sample)
+                    print(samples[0][field].size())
                     raise AssertionError(
                         "Fields for all samples must be equally sized. "
                         "{} is of different sizes".format(field)
                     )
-
                 self[field][idx] = self._get_data_copy(sample[field])
 
             if isinstance(samples[0][field], collections.abc.Mapping):
