@@ -59,12 +59,16 @@ class TextVQADataset(MMFDataset):
         answer_space_size = answer_processor.get_true_vocab_size()
 
         image_ids = report.image_id.cpu().numpy()
-        context_tokens = report.context_tokens.cpu().numpy()
+        ocr_source_num = report.ocr_source_num[0]
+        context_tokens = []
+        for i in range(ocr_source_num):
+            context_tokens.append(report[f"context_tokens_{i}"].cpu().numpy())
+        ocr_source = report.source.cpu().numpy()
         predictions = []
         for idx, question_id in enumerate(report.question_id):
             # collect VQA answers
             image_id = byte_tensor_to_object(image_ids[idx])
-            tokens = byte_tensor_to_object(context_tokens[idx])
+            tokens = byte_tensor_to_object(context_tokens[ocr_source[idx]][idx])
             answer_words = []
             pred_source = []
             for answer_id in pred_answers[idx].tolist():
