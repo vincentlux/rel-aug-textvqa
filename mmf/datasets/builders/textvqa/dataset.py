@@ -5,7 +5,7 @@ from mmf.common.sample import Sample
 from mmf.common.registry import registry
 from mmf.datasets.mmf_dataset import MMFDataset
 from mmf.utils.distributed import byte_tensor_to_object, object_to_byte_tensor
-from mmf.utils.pos_emb import pos_emb_calculator
+#from mmf.utils.pos_emb import pos_emb_calculator
 from mmf.utils.text import word_tokenize, mask_tokens
 from transformers.tokenization_auto import AutoTokenizer
 import copy as c
@@ -16,9 +16,9 @@ class TextVQADataset(MMFDataset):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
-        self.pos_emb_calculator = pos_emb_calculator( 
-            Dim=self.config.get("pos_emb_length",20),
-            L=self.config.processors.bbox_processor.params.max_length)
+        #self.pos_emb_calculator = pos_emb_calculator( 
+        #    Dim=self.config.get("pos_emb_length",20),
+        #    L=self.config.processors.bbox_processor.params.max_length)
         if getattr(self.config, "pretrain", False):
             self.pretrain_mlm = self.config.pretrain.type == 'mlm'
         else:
@@ -122,15 +122,15 @@ class TextVQADataset(MMFDataset):
 
         # only the 'max_features' key is needed
         # pop other keys to minimize data loading overhead
-        if hasattr(current_sample, "image_info_0"):
-            for k in list(current_sample.image_info_0):
-                if k != "max_features":
-                    current_sample.image_info_0.pop(k)
-        if hasattr(current_sample, "image_info_1"):
-            for k in list(current_sample.image_info_1):
-                if k != "max_features":
-                    current_sample.image_info_1.pop(k)
-        # print("in __getitem__", current_sample.keys())
+        #if hasattr(current_sample, "image_info_0"):
+        #   for k in list(current_sample.image_info_0):
+        #        if k != "max_features":
+        #            current_sample.image_info_0.pop(k)
+        #if hasattr(current_sample, "image_info_1"):
+        #    for k in list(current_sample.image_info_1):
+        #        if k != "max_features":
+        #            current_sample.image_info_1.pop(k)
+        #print("in __getitem__", current_sample.keys())
         return current_sample
 
     def add_sample_details(self, sample_info, sample):
@@ -174,26 +174,30 @@ class TextVQADataset(MMFDataset):
         # Object text information
         if "object_tokens" not in sample["image_info_0"]:
             sample['image_info_0']['object_tokens'] = ["Null" for x in range(sample.obj_bbox_coordinates.shape[0])]
-        obj_text_processor_args = {"tokens": sample['image_info_0']['object_tokens']}
-        object_tokens = self.obj_text_processor(obj_text_processor_args) 
+        obj_tokens = sample["image_info_0"]["object_tokens"]
+        obj_text_processor_args = {"tokens": obj_tokens}
+        processed_object_tokens = self.obj_text_processor(obj_text_processor_args) 
         # TODO: tokenize object tokens and convert to indices
-        obj_tokens = sample['image_info_0']['object_tokens']
         sample.obj_max_features = torch.tensor(len(obj_tokens))
-        sample.obj_bert_context = object_tokens["input_ids"]
-        sample.obj_bert_tokens = object_tokens["tokens"]
-        sample.obj_bert_input_mask = object_tokens["input_mask"]
-        sample.obj_bert_context_len = torch.tensor(len(object_tokens["tokens"]), dtype=torch.long)
+        sample.obj_bert_context = processed_object_tokens["input_ids"]
+        sample.obj_bert_tokens = processed_object_tokens["tokens"]
+        sample.obj_bert_input_mask = processed_object_tokens["input_mask"]
+        sample.obj_bert_context_len = torch.tensor(len(processed_object_tokens["tokens"]), dtype=torch.long)
         
-        sample.obj_token_map = []
-        sample.combined_obj_token_map = []
+        sample.obj_vis2token_map = [] 
+        sample.combined_obj_vis2token_map = []
+        sample.obj_token2vis_map = []
+        sample.obj_berttoken2vis_map = []
         temp_obj_bert_subcontext = []
         cnt = 0; obj_ptr = 1; combined_ptr = len(processed_question["tokens"])
         while (cnt < len(obj_tokens)):
-            sample.obj_token_map.append(obj_ptr)
-            sample.combined_obj_token_map.append(combined_ptr)
+            sample.obj_vis2token_map.append(obj_ptr)
+            sample.combined_obj_vis2token_map.append(combined_ptr)
             tgt_token = obj_tokens[cnt]
             processed_token = self.obj_text_processor.tokenize(tgt_token)
-            temp_obj_bert_subcontext.append(object_tokens["input_ids"][obj_ptr])
+            sample.obj_token2vis_map += [cnt]
+            sample.obj_berttoken2vis_map += [cnt]*len(processed_token)
+            temp_obj_bert_subcontext.append(processed_object_tokens["input_ids"][obj_ptr])
             obj_ptr += len(processed_token)
             combined_ptr += len(processed_token)
             if obj_ptr >= sample.obj_bert_input_mask.shape[0]:
@@ -268,7 +272,7 @@ class TextVQADataset(MMFDataset):
                 l_omax = self.config.processors.obj_text_processor.params.max_seq_length
                 l_cmax = self.config.processors.context_processor.params.max_seq_length
                 l_t = len(processed_question["tokens"]) # sample.text_len
-                l_o = len(object_tokens["tokens"]) # sample.obj_bert_context_len
+                l_o = len(processed_object_tokens["tokens"]) # sample.obj_bert_context_len
                 l_c = len(processed_context["tokens"]) # this_sample.bert_context_len
                 assert l_t <= l_tmax
                 assert l_o <= l_omax
@@ -284,17 +288,27 @@ class TextVQADataset(MMFDataset):
                         sample.obj_bert_input_mask[1:l_o], 
                         this_sample.bert_input_mask[1:l_c],
                         torch.zeros(l_pad,dtype=torch.long)])
-                
+                this_sample.bert_combined_featsource = torch.LongTensor([1]*l_t+[2]*(l_o-1)+[3]*(l_c-1)+[0]*l_pad)
+                this_sample.bert_combined_position = torch.LongTensor(list(range(l_t-1))+list(range(l_o-1))+list(range(l_c-1))+[-1]*(l_pad+1))
+                print(this_sample.bert_combined)
+                print(this_sample.bert_combined_mask)
+                print(this_sample.bert_combined_featsource)
+                print(this_sample.bert_combined_position)
+                raise NotImplementedError
                 # Generate the subtokens and map for ocr text
-                this_sample.context_token_map = []
-                this_sample.combined_context_token_map = []
+                this_sample.context_vis2token_map = []
+                this_sample.combined_context_vis2token_map = []
+                this_sample.context_token2vis_map = []
+                this_sample.context_berttoken2vis_map = []
                 temp_ocr_bert_subcontext[current_source] = []
                 cnt = 0; context_ptr = 1; combined_ptr = l_t+l_o-1
                 while(cnt<len(ocr_tokens)):
-                    this_sample.context_token_map.append(context_ptr)
-                    this_sample.combined_context_token_map.append(combined_ptr)
+                    this_sample.context_vis2token_map.append(context_ptr)
+                    this_sample.combined_context_vis2token_map.append(combined_ptr)
                     tgt_token = ocr_tokens[cnt]
                     processed_token = self.context_processor.tokenize(tgt_token)
+                    this_sample.context_token2vis_map += [cnt]
+                    this_sample.context_berttoken2vis_map += [cnt]*len(processed_token)
                     temp_ocr_bert_subcontext[current_source].append(processed_context["input_ids"][context_ptr])
                     context_ptr += len(processed_token)
                     combined_ptr += len(processed_token)
@@ -302,10 +316,10 @@ class TextVQADataset(MMFDataset):
                         break
                     cnt+=1
                 
-                while(len(this_sample.context_token_map)<len(ocr_tokens)):
-                    this_sample.context_token_map.append(l_cmax-1)
-                while(len(this_sample.combined_context_token_map)<len(ocr_tokens)):
-                    this_sample.combined_context_token_map.append(l_tmax+l_omax+l_cmax-1)
+                #while(len(this_sample.context_token_map)<len(ocr_tokens)):
+                #    this_sample.context_token_map.append(l_cmax-1)
+                #while(len(this_sample.combined_context_token_map)<len(ocr_tokens)):
+                #    this_sample.combined_context_token_map.append(l_tmax+l_omax+l_cmax-1)
 
             else:
                 raise NotImplementedError
@@ -318,6 +332,7 @@ class TextVQADataset(MMFDataset):
                 this_sample.context_info_1.max_features = context_phoc["length"]
             
             # OCR token hierarchy vectors (ZHEN: changed)
+            '''
             if self.config.get("use_ocr_word_position", False):
                 if len(ocr_info)==0:
                     vec_arr = np.zeros((len(this_sample.ocr_tokens),60),dtype=np.int) - 1 # TODO: Magic Number 60
@@ -334,7 +349,7 @@ class TextVQADataset(MMFDataset):
                 this_sample.ocr_pos_emb = self.copy_processor(
                     {"blob": vec_arr}
                 )["blob"][:max_len]
-            
+            '''
             # OCR bounding box information
             if f"ocr_normalized_boxes_{current_source}" not in sample_info:
                 box_key = f"ocr_normalized_boxes_0"
