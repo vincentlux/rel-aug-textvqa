@@ -2,11 +2,18 @@ includes:
 - ./defaults.yaml
 
 training:
-  max_updates: 48000
-  batch_size: 128
+  seed: 37796327
+  max_updates: 96000
+  batch_size: 32
   num_workers: 0
   mlflow: true
-  evaluation_interval: 2000
+  evaluation_freq: epoch
+  evaluation_interval: 1
+  lr_steps:
+    - 14000
+    - 19000
+    - 24000
+    - 29000
 
 dataset_config:
   textvqa:
@@ -18,18 +25,18 @@ dataset_config:
     - textvqa.ocr_en
     features:
       train:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
       val:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
       test:
-      - textvqa/defaults/features/open_images/detectron.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb,vg/defaults/features/vg/detectron_nms_0.1_rm_dup_sent.lmdb
     annotations:
       train:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
       val:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
       test:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure.npy
+      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
     processors:
       context_processor:
         type: bert_tokenizer
@@ -39,6 +46,18 @@ dataset_config:
             params:
               do_lower_case: true
           max_seq_length: 250
+      obj_text_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 100
+    use_ocr_word_position: true
+    pos_emb_length: 20
+    use_all_pretrain_data: true
+
 
 model_config:
   m4c:
@@ -48,7 +67,13 @@ model_config:
     joint_train:
       task: obj_pretrain
       format: epoch
+      train_first: textvqa # textvqa (indicate which task to be trained first)
     ocr:
+      encode_concat: true
+      remove_ocr_posemb: false
       text_embedding: bert
-      mmt_in_dim: 3420  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
-
+      mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
+      normalize_bert: false
+    obj:
+      mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
+      normalize_bert: false

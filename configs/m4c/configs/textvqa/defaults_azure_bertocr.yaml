@@ -6,7 +6,12 @@ training:
   num_workers: 0
   mlflow: true
   batch_size: 32
-  evaluation_interval: 2000
+  evaluation_interval: 1000
+  lr_steps:
+  - 14000
+  - 19000
+  - 24000
+  - 29000
 
 dataset_config:
   textvqa:

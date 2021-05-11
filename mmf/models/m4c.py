@@ -222,94 +222,142 @@ class M4C(BaseModel):
         # print("In model m4c forward, sample_list:\n", sample_list.keys())
         # set current_epoch_mode
         self._configure_joint_train()
-        # fwd_results holds intermediate forward pass results
-        # TODO possibly replace it with another sample list
-        # print("in forward, sample_list.targets\n", sample_list.targets)
-        fwd_results = {}
-        max_conf = -10000000
-        pred_source = None
-        scores = None
-        updated_target = None
-        mlm_labels = None
-        if not self.pretrain_mlm:
-            target_size = sample_list.targets.size()
-            target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
-            updated_loss_mask = None
-            loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
-        for i in range(sample_list["ocr_source_num"][0]):
-            sample_list["current_source"] = i
+        if self.joint_train and self.current_epoch_mode != "textvqa":
+            # fwd_results holds intermediate forward pass results
+            # TODO possibly replace it with another sample list
+            fwd_results = {}
             self._forward_txt_encoding(sample_list, fwd_results)
             self._forward_obj_encoding(sample_list, fwd_results)
             self._forward_ocr_encoding(sample_list, fwd_results)
             self._forward_mmt_and_output(sample_list, fwd_results)
-            if self.training:
-                if i == 0:
-                    scores = fwd_results["scores"]
-                    if self.pretrain_mlm:
-                        mlm_labels = fwd_results["mlm_labels"]
-                else:
-                    scores = torch.cat([scores, fwd_results["scores"]], 1)
-                    if self.pretrain_mlm:
-                        mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
-            else:
-                if i == 0:
-                    if self.pretrain_mlm:
-                        scores = fwd_results["scores"]
-                        mlm_labels = fwd_results["mlm_labels"]
-                    else:
-                        max_conf = fwd_results["conf"]
-                        scores = fwd_results["scores"]
-                        pred_source = torch.zeros_like(max_conf).to(torch.long)
-                        updated_target = target[:, 0]
-                        updated_loss_mask = loss_mask[:, 0]
-                else:
-                    if self.pretrain_mlm:
-                        scores = torch.cat([scores, fwd_results["scores"]], 1)
-                        mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
-                    else:
-                        current_source = torch.ones_like(pred_source) * i
-                        pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
-                        scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
-                        updated_target = torch.where(
-                            (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
-                            updated_target,
-                            target[:, i])
-                        updated_loss_mask = torch.where(
-                            (max_conf > fwd_results["conf"]).unsqueeze(-1),
-                            updated_loss_mask,
-                            loss_mask[:, i]
-                        )
-                        max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
-        # only keep scores in the forward pass results
-        #print("in forward:")
-        #print("scores:", scores.shape)
-        #print("train_loss_mask:", sample_list.train_loss_mask.shape)
-        if self.pretrain_mlm:
-            results = {"mlm_scores": scores, "mlm_labels": mlm_labels}
+            # only keep scores in the forward pass results
+            results = {"scores": fwd_results["scores"]}
             return results
 
-        if not self.training:
-        #    print(pred_source.shape)
-        #    print(pred_source)
-        #    print(updated_target.shape)
-            sample_list.targets = updated_target
-            sample_list.train_loss_mask = updated_loss_mask
-            for i in range(sample_list["ocr_source_num"][0]):
-                sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
-            results = {"scores": scores, "source": pred_source}
         else:
-            results = {"scores": scores}
-        return results
+            # fwd_results holds intermediate forward pass results
+            # TODO possibly replace it with another sample list
+            # print("in forward, sample_list.targets\n", sample_list.targets)
+            fwd_results = {}
+            max_conf = -10000000
+            pred_source = None
+            scores = None
+            updated_target = None
+            mlm_labels = None
+            if not self.pretrain_mlm:
+                target_size = sample_list.targets.size()
+                target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
+                updated_loss_mask = None
+                loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
+            for i in range(sample_list["ocr_source_num"][0]):
+                sample_list["current_source"] = i
+                self._forward_txt_encoding(sample_list, fwd_results)
+                self._forward_obj_encoding(sample_list, fwd_results)
+                self._forward_ocr_encoding(sample_list, fwd_results)
+                self._forward_mmt_and_output(sample_list, fwd_results)
+                if self.training:
+                    if i == 0:
+                        scores = fwd_results["scores"]
+                        if self.pretrain_mlm:
+                            mlm_labels = fwd_results["mlm_labels"]
+                    else:
+                        scores = torch.cat([scores, fwd_results["scores"]], 1)
+                        if self.pretrain_mlm:
+                            mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
+                else:
+                    if i == 0:
+                        if self.pretrain_mlm:
+                            scores = fwd_results["scores"]
+                            mlm_labels = fwd_results["mlm_labels"]
+                        else:
+                            max_conf = fwd_results["conf"]
+                            scores = fwd_results["scores"]
+                            pred_source = torch.zeros_like(max_conf).to(torch.long)
+                            updated_target = target[:, 0]
+                            updated_loss_mask = loss_mask[:, 0]
+                    else:
+                        if self.pretrain_mlm:
+                            scores = torch.cat([scores, fwd_results["scores"]], 1)
+                            mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
+                        else:
+                            current_source = torch.ones_like(pred_source) * i
+                            pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
+                            scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
+                            updated_target = torch.where(
+                                (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
+                                updated_target,
+                                target[:, i])
+                            updated_loss_mask = torch.where(
+                                (max_conf > fwd_results["conf"]).unsqueeze(-1),
+                                updated_loss_mask,
+                                loss_mask[:, i]
+                            )
+                            max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
+
+            # only keep scores in the forward pass results
+            #print("in forward:")
+            #print("scores:", scores.shape)
+            #print("train_loss_mask:", sample_list.train_loss_mask.shape)
+            if self.pretrain_mlm:
+                results = {"mlm_scores": scores, "mlm_labels": mlm_labels}
+                return results
+
+            if not self.training:
+            #    print(pred_source.shape)
+            #    print(pred_source)
+            #    print(updated_target.shape)
+                sample_list.targets = updated_target
+                sample_list.train_loss_mask = updated_loss_mask
+                for i in range(sample_list["ocr_source_num"][0]):
+                    sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
+                results = {"scores": scores, "source": pred_source}
+            else:
+                results = {"scores": scores}
+            return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
         if self.joint_train and self.current_epoch_mode == 'obj_pretrain':
-            fwd_results["txt_inds"] = sample_list.text
+            # fwd_results["txt_inds"] = sample_list.text
+            #
+            # # binary mask of valid text (question words) vs padding
+            # fwd_results["txt_mask"] = _get_mask(
+            #     sample_list.text_len, sample_list.text.size(1)
+            # )
+            encode_concat_flag = getattr(self.config.ocr, "encode_concat", False)
+            if encode_concat_flag:
+                combined_rawtextemb = self.text_bert(txt_inds=sample_list.bert_combined,
+                                                     txt_mask=sample_list.bert_combined_mask)
 
-            # binary mask of valid text (question words) vs padding
-            fwd_results["txt_mask"] = _get_mask(
-                sample_list.text_len, sample_list.text.size(1)
-            )
+                text_cat_ls, objtext_cat_ls = [], []
+                s = combined_rawtextemb.shape  # [bs, L(seq), L(rep)]
+                l_q = 20  # Length of question, magic number
+                m_o = 100  # Max num of object tokens, magic number
+
+                if self.pretrain_mlm:
+                    obj_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=obj_rawtextemb.device).fill_(
+                        -100)
+                    ocr_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=ocr_rawtextemb.device).fill_(
+                        -100)
+
+                for i in range(s[0]):
+                    text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]],
+                                           (0, 0, 0, l_q - sample_list.text_len[i]), "constant", 0)  # [bs,l_q,L(rep)]
+                    obj_map_ls = sample_list.combined_obj_token_map[i][:m_o]
+                    obj_token_rep = F.pad(combined_rawtextemb[i][obj_map_ls], (0, 0, 0, m_o - len(obj_map_ls)),
+                                          "constant", 0)
+
+                    text_cat_ls.append(text_token_rep)
+                    objtext_cat_ls.append(obj_token_rep)
+                    if self.pretrain_mlm:
+                        map_ls = sample_list.obj_token_map[i][:m_o]
+                        obj_textemb_labels[i, :len(map_ls)] = fwd_results["obj_token_inds_labels"][i][map_ls]
+                        map_ls = current_source.context_token_map[i][:m_c]
+                        ocr_textemb_labels[i, :len(map_ls)] = fwd_results["ocr_token_inds_labels"][i][map_ls]
+
+                fwd_results["txt_emb"] = torch.stack(text_cat_ls, dim=0)
+                fwd_results["txt_mask"] = sample_list.text_mask
+                fwd_results["obj_textemb"] = torch.stack(objtext_cat_ls, dim=0)
 
         else:
             current_ocr_source_id = sample_list["current_source"]
@@ -542,10 +590,11 @@ class M4C(BaseModel):
     def _forward_obj_pretrain_mmt_and_output(self, sample_list, fwd_results):
         # forward mmt
         # first forward the text BERT layers
-        text_bert_out = self.text_bert(
-            txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
-        )
-        fwd_results["txt_emb"] = self.text_bert_out_linear(text_bert_out)
+        # import pdb; pdb.set_trace()
+        # text_bert_out = self.text_bert(
+        #     txt_inds=fwd_results["txt_inds"], txt_mask=fwd_results["txt_mask"]
+        # )
+        fwd_results["txt_emb"] = self.text_bert_out_linear(fwd_results["txt_emb"])
 
         mmt_results = self.mmt(
             txt_emb=fwd_results["txt_emb"],

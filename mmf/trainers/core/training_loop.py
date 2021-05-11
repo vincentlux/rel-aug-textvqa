@@ -53,7 +53,9 @@ class TrainerTrainingLoopMixin(ABC):
             registry.register("current_epoch", self.current_epoch)
             if registry.get("joint_train", False):
                 joint_train_mode = registry.get("joint_train_mode")
-                current_epoch_mode = "textvqa" if self.current_epoch % 2 == 0 else joint_train_mode
+                # indicate which task to be used for first epoch
+                ind = 1 if registry.get("train_first") == "textvqa" else 0
+                current_epoch_mode = "textvqa" if self.current_epoch % 2 == ind else joint_train_mode
                 registry.register("current_epoch_mode", current_epoch_mode)
             else:
                 registry.register("current_epoch_mode", "textvqa")
@@ -131,35 +133,44 @@ class TrainerTrainingLoopMixin(ABC):
 
                 # Check if training should be stopped
                 should_break = False
-
-                if self.num_updates % self.training_config.evaluation_interval == 0:
-                    # Validation begin callbacks
-                    self.on_validation_start()
-
-                    logger.info("Evaluation time. Running on full validation set...")
-                    # Validation and Early stopping
-                    # Create a new meter for this case
-                    report, meter = self.evaluation_loop(self.val_loader, True)
-
-                    # Validation end callbacks
-                    stop = self.early_stop_callback.on_validation_end(
-                        report=report, meter=meter
-                    )
-                    self.on_validation_end(report=report, meter=meter)
-
-                    gc.collect()
-
-                    if "cuda" in str(self.device):
-                        torch.cuda.empty_cache()
-
-                    if stop is True:
-                        logger.info("Early stopping activated")
-                        should_break = True
+                # TODO: add eval per epoch
+                if getattr(self.training_config, "evaluation_freq", "iter") == "iter" and \
+                        self.num_updates % self.training_config.evaluation_interval == 0:
+                    should_break = self._evaluate()
                 if self.num_updates >= self.max_updates:
                     should_break = True
 
                 if should_break:
                     break
+            if getattr(self.training_config, "evaluation_freq", "iter") == "epoch" and \
+                    self.current_epoch % self.training_config.evaluation_interval == 0:
+                logger.info(f"Evaluate epoch {self.current_epoch}")
+                self._evaluate()
+
+    def _evaluate(self):
+        # Validation begin callbacks
+        self.on_validation_start()
+
+        logger.info("Evaluation time. Running on full validation set...")
+        # Validation and Early stopping
+        # Create a new meter for this case
+        report, meter = self.evaluation_loop(self.val_loader, True)
+
+        # Validation end callbacks
+        stop = self.early_stop_callback.on_validation_end(
+            report=report, meter=meter
+        )
+        self.on_validation_end(report=report, meter=meter)
+
+        gc.collect()
+
+        if "cuda" in str(self.device):
+            torch.cuda.empty_cache()
+
+        if stop is True:
+            logger.info("Early stopping activated")
+            should_break = True
+        return should_break
 
     def run_training_batch(self, batch: Tensor, loss_divisor: int) -> None:
         report = self._forward(batch)
