@@ -3,7 +3,7 @@ import functools
 import logging
 import math
 import copy
-
+import numpy as np
 import torch
 import torch.nn.functional as F
 from mmf.common.registry import registry
@@ -106,7 +106,7 @@ class M4C_sep(BaseModel):
         self.linear_obj_bbox_to_mmt_in = nn.Linear(4, self.mmt_config.hidden_size)
         self.obj_feat_layer_norm = nn.LayerNorm(self.mmt_config.hidden_size)
         self.obj_bbox_layer_norm = nn.LayerNorm(self.mmt_config.hidden_size)
-        self.obj_drop = nn.Dropout(self.config.obj.dropout_prob)  
+        self.obj_drop = nn.Dropout(self.config.obj.dropout_prob)
 
         # Optional: Separate RCNNs
         self.ocr_faster_rcnn_fc7 = build_image_encoder(
@@ -131,7 +131,7 @@ class M4C_sep(BaseModel):
         #self.remove_ocr_frcn = getattr(self.config.ocr, "remove_ocr_frcn", False)
         #self.remove_ocr_posemb = getattr(self.config.ocr, "remove_ocr_posemb", True)
         #self.remove_ocr_semantics = getattr(self.config.ocr, "remove_ocr_semantics", False)
-        #self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)   
+        #self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)
         self.linear_ocr_txt_feat_to_mmt_in = nn.Linear(
             self.config.phoc_dim, self.mmt_config.hidden_size
         )
@@ -187,11 +187,12 @@ class M4C_sep(BaseModel):
         self.ocr_drop = nn.Dropout(self.config.ocr.dropout_prob)
     '''
     def _build_mmt(self):
-        
-        self.feat_type_emb = nn.Embedding(4,self.mmt_config.hidden_size,padding_idx=0)
-        self.pos_emb = nn.Embedding(201,self.mmt_config.hidden_size,padding_idx=-1)
-        c = pos_emb_calculator(Dim=self.mmt_config.hidden_size, L=201)
-        c.pos_arr[-1,:] = 0.0
+        self.model_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.feat_type_emb = nn.Embedding(4,self.mmt_config.hidden_size,padding_idx=3).to(self.model_device)
+        self.pos_emb = nn.Embedding(501,self.mmt_config.hidden_size,padding_idx=0).to(self.model_device)
+        c = pos_emb_calculator(Dim=self.mmt_config.hidden_size, L=501)
+        c.pos_arr[1:,:] = c.pos_arr[:-1,:]
+        c.pos_arr[0,:] = 0.0
         self.pos_emb.weight = nn.Parameter(torch.FloatTensor(c.pos_arr))
         self.pos_emb.weight.requires_grad = False
         self.mmt = MMT_V2(self.mmt_config)
@@ -315,7 +316,7 @@ class M4C_sep(BaseModel):
             fwd_results["ocr_token_inds"] = current_source.bert_context
 
         if self.config.ocr.text_embedding == "fasttext":
-            # Zhen: This probably doesn't support mlm now... 
+            # Zhen: This probably doesn't support mlm now...
             # Text embedding
             raise NotImplementedError
 
@@ -324,9 +325,6 @@ class M4C_sep(BaseModel):
             if encode_concat_flag:
                 combined_rawtextemb = self.text_bert(txt_inds=current_source.bert_combined, txt_mask=current_source.bert_combined_mask)
                 combined_rawtextemb = self.text_bert_out_linear(combined_rawtextemb)
-                combined_rawtextemb = combined_rawtextemb \
-                                      + self.feat_type_emb[current_source.bert_combined_featsource] \
-                                      + self.pos_emb[current_source.bert_combined_position] 
                 text_cat_ls, objtext_cat_ls, context_cat_ls = [], [], []
                 s = combined_rawtextemb.shape #[bs, L(seq), L(rep)]
                 l_q = 20 # Length of question, magic number
@@ -334,9 +332,9 @@ class M4C_sep(BaseModel):
                 m_c = 50 # Max number of context tokens, magic number
 
                 if self.pretrain_mlm:
-                    obj_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=obj_rawtextemb.device).fill_(-100)                
+                    obj_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=obj_rawtextemb.device).fill_(-100)
                     ocr_textemb_labels = torch.empty((s[0], m), dtype=torch.long, device=ocr_rawtextemb.device).fill_(-100)
-                
+
                 for i in range(s[0]):
                     text_token_rep = F.pad(combined_rawtextemb[i][:sample_list.text_len[i]], (0,0,0,l_q-sample_list.text_len[i]),"constant",0) #[bs,l_q,L(rep)]
                     obj_map_ls = sample_list.combined_obj_vis2token_map[i][:m_o]
@@ -351,10 +349,10 @@ class M4C_sep(BaseModel):
                         obj_textemb_labels[i, :len(map_ls)] = fwd_results["obj_token_inds_labels"][i][map_ls]
                         map_ls = current_source.context_token_map[i][:m_c]
                         ocr_textemb_labels[i, :len(map_ls)] = fwd_results["ocr_token_inds_labels"][i][map_ls]
-
-                fwd_results["q_textemb"] = torch.stack(text_cat_ls,dim=0)
-                fwd_results["obj_textemb"] = torch.stack(objtext_cat_ls,dim=0)
-                fwd_results["ocr_textemb"] = torch.stack(context_cat_ls,dim=0)
+                fwd_results["q_textemb"] = torch.stack(text_cat_ls,dim=0) + self.pos_emb(sample_list.text_pos_lb) + self.feat_type_emb(torch.LongTensor([0]).to(self.model_device))
+                fwd_results["obj_textemb"] = torch.stack(objtext_cat_ls,dim=0) + self.pos_emb(sample_list.obj_token2vis_map) + self.feat_type_emb(torch.LongTensor([1]).to(self.model_device))
+                fwd_results["ocr_textemb"] = torch.stack(context_cat_ls,dim=0) + self.pos_emb(current_source.context_token2vis_map) + self.feat_type_emb(torch.LongTensor([2]).to(self.model_device))
+                combined_rawtextemb = torch.cat([fwd_results["q_textemb"],fwd_results["obj_textemb"],fwd_results["ocr_textemb"]],dim=1)
                 fwd_results["combined_textemb"] = combined_rawtextemb
                 if self.pretrain_mlm:
                     fwd_results["obj_bert_context_mlm_labels"] = obj_textemb_labels
@@ -363,7 +361,7 @@ class M4C_sep(BaseModel):
                 raise NotImplementedError
         else:
             raise NotImplementedError
-        
+
         if self.config.ocr.normalize_bert:
             fwd_results["combined_textemb"] = F.normalize(fwd_results["combined_textemb"], dim=-1)
             fwd_results["obj_textemb"] = F.normalize(fwd_results["obj_textemb"], dim=-1)
@@ -379,11 +377,13 @@ class M4C_sep(BaseModel):
         obj_fc7 = F.normalize(obj_fc7, dim=-1)
         obj_bbox = sample_list.obj_bbox_coordinates
         obj_vis = self.obj_feat_layer_norm(self.linear_obj_feat_to_mmt_in(obj_fc7)) \
-                + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(obj_bbox))
+                + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(obj_bbox)) \
+                + self.pos_emb(sample_list.obj_token2vis_map) \
+                + self.feat_type_emb(torch.LongTensor([1]).to(self.model_device))
+
         obj_vis = self.obj_drop(obj_vis)
         fwd_results["obj_vis"] = obj_vis
-        obj_nums = sample_list.image_info_0.max_features
-        fwd_results["obj_vis_mask"] = _get_mask(obj_nums, obj_vis.size(1))
+        fwd_results["obj_vis_mask"] = sample_list.obj_mask
 
         current_ocr_source_id = sample_list["current_source"]
         current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]
@@ -395,18 +395,17 @@ class M4C_sep(BaseModel):
         #if self.remove_ocr_frcn:
         #    ocr_fc7 = torch.zeros_like(ocr_fc7)
         ocr_bbox = current_source.ocr_bbox_coordinates
-        #ocr_mmt_in = self.ocr_feat_layer_norm(self.linear_ocr_feat_to_mmt_in(ocr_feat)) \
-        #           + self.ocr_bbox_layer_norm(self.linear_ocr_bbox_to_mmt_in(ocr_bbox))
         ocr_vis = self.obj_feat_layer_norm(self.linear_obj_feat_to_mmt_in(ocr_fc7)) \
-                   + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(ocr_bbox))
+                + self.obj_bbox_layer_norm(self.linear_obj_bbox_to_mmt_in(ocr_bbox)) \
+                + self.pos_emb(current_source.context_token2vis_map) \
+                + self.feat_type_emb(torch.LongTensor([2]).to(self.model_device))
         ocr_vis = self.obj_drop(ocr_vis)
         fwd_results["ocr_vis"] = ocr_vis
-        ocr_nums = current_source.context_info_0.max_features
-        fwd_results["ocr_vis_mask"] = _get_mask(ocr_nums, ocr_vis.size(1))
+        fwd_results["ocr_vis_mask"] = current_source.context_mask
 
     def _forward_ocr_encoding(self, sample_list, fwd_results):
         current_ocr_source_id = sample_list["current_source"]
-        current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]        
+        current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]
         # OCR PHOC feature (604-dim)
         ocr_phoc = current_source.context_feature_1
         ocr_phoc = F.normalize(ocr_phoc, dim=-1)
@@ -420,31 +419,33 @@ class M4C_sep(BaseModel):
         #    ocr_feat = torch.zeros_like(ocr_feat)
         ocr_phoc = self.ocr_feat_layer_norm(self.linear_ocr_txt_feat_to_mmt_in(ocr_phoc))
         ocr_phoc = self.ocr_drop(ocr_phoc)
-        fwd_results["ocr_phoc"] = ocr_phoc
-        ocr_nums = current_source.context_info_0.max_features
-        fwd_results["ocr_phoc_mask"] = _get_mask(ocr_nums, ocr_phoc.size(1))
+        fwd_results["ocr_phoc"] = ocr_phoc \
+                                  + self.pos_emb(current_source.context_token2vis_map) \
+                                  + self.feat_type_emb(torch.LongTensor([2]).to(self.model_device))
+        fwd_results["ocr_phoc_mask"] = current_source.context_mask
 
     def _forward_mmt(self, sample_list, fwd_results):
         current_ocr_source_id = sample_list["current_source"]
-        current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]        
+        current_source = sample_list[f"ocr_source_{current_ocr_source_id}"]
         #print(fwd_results["txt_emb"].shape,fwd_results["txt_mask"].shape)
         #print(fwd_results["obj_vis_mmt_in"].shape,fwd_results["obj_vis_mask"].shape)
         #print(fwd_results["ocr_vis_mmt_in"].shape,fwd_results["ocr_vis_mask"].shape)
         #print(fwd_results["ocr_txt_mmt_in"].shape,fwd_results["ocr_txt_mask"].shape)
-        
+
         # first forward the text BERT layers
-        
-        fwd_results["txt_mask"] = current_source.bert_combined_mask
-        
+
+        fwd_results["txt_mask"] = torch.cat([sample_list.text_mask, sample_list.obj_mask, current_source.context_mask], dim=1)
+
         mmt_results = self.mmt(
-            bert_txt_emb=fwd_results["txt_emb"],
+            bert_txt_emb=fwd_results["combined_textemb"],
             bert_txt_mask=fwd_results["txt_mask"],
             obj_vis_emb=fwd_results["obj_vis"],
             obj_vis_mask=fwd_results["obj_vis_mask"],
             ocr_vis_emb=fwd_results["ocr_vis"],
             ocr_vis_mask=fwd_results["ocr_vis_mask"],
-            ocr_txt_emb=fwd_results["ocr_phoc"],
-            ocr_txt_mask=fwd_results["ocr_phoc_mask"],
+            ocr_phoc_emb=fwd_results["ocr_phoc"],
+            ocr_phoc_mask=fwd_results["ocr_phoc_mask"],
+            ocr_token_emb=fwd_results["ocr_textemb"],
             fixed_ans_emb=self.classifier.module.weight,
             prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
             pretrain_mlm=self.pretrain_mlm,
@@ -669,9 +670,9 @@ class MMT_V2(BertPreTrainedModel):
             obj_vis_mask,
             ocr_vis_emb,
             ocr_vis_mask,
-            ocr_txt_emb,
-            ocr_txt_mask,
-            ocr_outputpred_emb,
+            ocr_phoc_emb,
+            ocr_phoc_mask,
+            ocr_token_emb,
             fixed_ans_emb,
             prev_inds,
             pretrain_mlm,
@@ -679,7 +680,7 @@ class MMT_V2(BertPreTrainedModel):
         if not pretrain_mlm:
             # build embeddings for predictions in previous decoding steps
             # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-            dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_outputpred_emb, prev_inds)
+            dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_token_emb, prev_inds)
 
             # a zero mask for decoding steps, so the encoding steps elements can't
             # attend to decoding steps.
@@ -689,8 +690,8 @@ class MMT_V2(BertPreTrainedModel):
                 dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
             )
             # TODO: simply generate masked tokens for these
-            encoder_inputs = torch.cat([bert_txt_emb, obj_vis_emb, ocr_vis_emb, ocr_txt_emb, dec_emb], dim=1)
-            attention_mask = torch.cat([bert_txt_mask, obj_vis_mask, ocr_vis_mask, ocr_txt_mask, dec_mask], dim=1)
+            encoder_inputs = torch.cat([bert_txt_emb, obj_vis_emb, ocr_vis_emb, ocr_phoc_emb, dec_emb], dim=1)
+            attention_mask = torch.cat([bert_txt_mask, obj_vis_mask, ocr_vis_mask, ocr_phoc_mask, dec_mask], dim=1)
         else:
             # ZHEN: to change
             encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb], dim=1)
@@ -700,13 +701,15 @@ class MMT_V2(BertPreTrainedModel):
         bert_txt_max_num = bert_txt_mask.size(-1)
         obj_vis_max_num = obj_vis_mask.size(-1)
         ocr_vis_max_num = ocr_vis_mask.size(-1)
-        ocr_txt_max_num = ocr_txt_mask.size(-1)
+        ocr_txt_max_num = ocr_phoc_mask.size(-1)
         if not pretrain_mlm:
             dec_max_num = dec_mask.size(-1)
-        
+
         bert_txt_begin = 0
         bert_txt_end = bert_txt_begin + bert_txt_max_num
-        ocr_txt_begin = bert_txt_max_num + obj_vis_max_num + ocr_vis_max_num
+        #ocr_txt_begin = bert_txt_max_num + obj_vis_max_num + ocr_vis_max_num
+        #ocr_txt_end = ocr_txt_begin + ocr_txt_max_num
+        ocr_txt_begin = bert_txt_end - ocr_txt_max_num
         ocr_txt_end = ocr_txt_begin + ocr_txt_max_num
 
         # We create a 3D attention mask from a 2D tensor mask.
@@ -743,108 +746,6 @@ class MMT_V2(BertPreTrainedModel):
         if not pretrain_mlm:
             mmt_txt_output = mmt_seq_output[:, bert_txt_begin:bert_txt_end]
             mmt_ocr_output = mmt_seq_output[:, ocr_txt_begin:ocr_txt_end]
-            mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
-            results = {
-                "mmt_seq_output": mmt_seq_output,
-                "mmt_txt_output": mmt_txt_output,
-                "mmt_ocr_output": mmt_ocr_output,
-                "mmt_dec_output": mmt_dec_output,
-            }
-        else:
-            mlm_prediction_scores = self.cls(mmt_seq_output)
-            results = {
-                "mmt_seq_output": mmt_seq_output,
-                "scores": mlm_prediction_scores
-            }
-
-        return results
-
-
-class MMT(BertPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.prev_pred_embeddings = PrevPredEmbeddings(config)
-        self.encoder = BertEncoder(config)
-        self.cls = BertOnlyMLMHead(config)
-        self.init_weights()
-
-    def forward(
-            self,
-            txt_emb,
-            txt_mask,
-            obj_emb,
-            obj_mask,
-            ocr_emb,
-            ocr_mask,
-            fixed_ans_emb,
-            prev_inds,
-            pretrain_mlm,
-    ):
-        if not pretrain_mlm:
-            # build embeddings for predictions in previous decoding steps
-            # fixed_ans_emb is an embedding lookup table for each fixed vocabulary
-            dec_emb = self.prev_pred_embeddings(fixed_ans_emb, ocr_emb, prev_inds)
-
-            # a zero mask for decoding steps, so the encoding steps elements can't
-            # attend to decoding steps.
-            # A triangular causal mask will be filled for the decoding steps
-            # later in extended_attention_mask
-            dec_mask = torch.zeros(
-                dec_emb.size(0), dec_emb.size(1), dtype=torch.float32, device=dec_emb.device
-            )
-            # TODO: simply generate masked tokens for these
-            encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb, dec_emb], dim=1)
-            attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask, dec_mask], dim=1)
-        else:
-            encoder_inputs = torch.cat([txt_emb, obj_emb, ocr_emb], dim=1)
-            attention_mask = torch.cat([txt_mask, obj_mask, ocr_mask], dim=1)
-
-        # offsets of each modality in the joint embedding space
-        txt_max_num = txt_mask.size(-1)
-        obj_max_num = obj_mask.size(-1)
-        ocr_max_num = ocr_mask.size(-1)
-        if not pretrain_mlm:
-            dec_max_num = dec_mask.size(-1)
-        txt_begin = 0
-        txt_end = txt_begin + txt_max_num
-        ocr_begin = txt_max_num + obj_max_num
-        ocr_end = ocr_begin + ocr_max_num
-
-        # We create a 3D attention mask from a 2D tensor mask.
-        # Sizes are [batch_size, 1, from_seq_length, to_seq_length]
-        # So we can broadcast to
-        # [batch_size, num_heads, from_seq_length, to_seq_length]
-        to_seq_length = attention_mask.size(1)
-        from_seq_length = to_seq_length
-
-        # generate the attention mask similar to prefix LM
-        # all elements can attend to the elements in encoding steps
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        extended_attention_mask = extended_attention_mask.repeat(
-            1, 1, from_seq_length, 1
-        )
-
-        if not pretrain_mlm:
-            # decoding step elements can attend to themselves in a causal manner
-            extended_attention_mask[:, :, -dec_max_num:, -dec_max_num:] = _get_causal_mask(
-                dec_max_num, encoder_inputs.device
-            )
-
-        # flip the mask, so that invalid attention pairs have -10000.
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-        assert not extended_attention_mask.requires_grad
-        head_mask = [None] * self.config.num_hidden_layers
-
-        encoder_outputs = self.encoder(
-            encoder_inputs, extended_attention_mask, head_mask=head_mask
-        )
-
-        mmt_seq_output = encoder_outputs[0]
-
-        if not pretrain_mlm:
-            mmt_txt_output = mmt_seq_output[:, txt_begin:txt_end]
-            mmt_ocr_output = mmt_seq_output[:, ocr_begin:ocr_end]
             mmt_dec_output = mmt_seq_output[:, -dec_max_num:]
             results = {
                 "mmt_seq_output": mmt_seq_output,
