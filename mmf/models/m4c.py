@@ -153,6 +153,7 @@ class M4C(BaseModel):
         self.remove_ocr_posemb = getattr(self.config.ocr, "remove_ocr_posemb", True)
         self.remove_ocr_semantics = getattr(self.config.ocr, "remove_ocr_semantics", False)
         self.remove_ocr_bbox = getattr(self.config.ocr, "remove_ocr_bbox", False)
+        self.remove_obj_txtemb = getattr(self.config.obj, "remove_obj_txtemb", False)
 
         # OCR appearance feature: Faster R-CNN
         self.ocr_faster_rcnn_fc7 = build_image_encoder(
@@ -491,8 +492,13 @@ class M4C(BaseModel):
         obj_fc7 = self.obj_faster_rcnn_fc7(obj_fc6)
         obj_fc7 = F.normalize(obj_fc7, dim=-1)
 
+        if self.remove_obj_txtemb:
+            obj_txtemb = torch.zeros_like(fwd_results["obj_textemb"])
+        else:
+            obj_txtemb = fwd_results["obj_textemb"]
+
         obj_feat = torch.cat(
-            [fwd_results["obj_textemb"], obj_fc7], dim=-1
+            [obj_txtemb, obj_fc7], dim=-1
         )
 
         # obj_feat = obj_fc7
