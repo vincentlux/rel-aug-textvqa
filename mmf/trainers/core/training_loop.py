@@ -148,6 +148,7 @@ class TrainerTrainingLoopMixin(ABC):
                 self._evaluate()
 
     def _evaluate(self):
+        should_break = False
         # Validation begin callbacks
         self.on_validation_start()
 
