@@ -2,7 +2,6 @@ includes:
 - ./defaults.yaml
 
 training:
-  seed: 37796327
   max_updates: 48000
   batch_size: 32
   num_workers: 0
@@ -10,8 +9,7 @@ training:
   evaluation_freq: epoch
   evaluation_interval: 1
   lr_steps:
-    - 28000
-    - 38000
+    - 14000
 
 
 dataset_config:
@@ -66,8 +64,8 @@ model_config:
     joint_train:
       task: obj_pretrain
       format: epoch
-      train_first: textvqa # obj_pretrain/textvqa (indicate which task to be trained first)
-      stop_pretrain_epoch: 12
+      train_first: obj_pretrain # obj_pretrain/textvqa (indicate which task to be trained first)
+      stop_pretrain_epoch: 16
     ocr:
       encode_concat: true
       remove_ocr_posemb: false

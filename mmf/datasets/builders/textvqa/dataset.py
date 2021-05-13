@@ -16,7 +16,7 @@ class TextVQADataset(MMFDataset):
         super().__init__("textvqa", config, dataset_type, index=imdb_file_index)
         self.use_ocr = self.config.use_ocr
         self.use_ocr_info = self.config.use_ocr_info
-        self.use_all_pretrain_data = self.config.use_all_pretrain_data
+        self.use_all_pretrain_data = getattr(self.config, "use_all_pretrain_data", False)
         self.joint_train = registry.get("joint_train")
         self.current_epoch_mode = None
         self.joint_train_mode = registry.get("joint_train_mode", None)

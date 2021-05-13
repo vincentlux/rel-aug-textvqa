@@ -3,6 +3,7 @@ includes:
 
 training:
   seed: 37796327
+  max_updates: 48000
   num_workers: 0
   mlflow: true
   batch_size: 32
@@ -10,8 +11,6 @@ training:
   lr_steps:
   - 14000
   - 19000
-  - 24000
-  - 29000
 
 dataset_config:
   textvqa:
@@ -64,5 +63,6 @@ model_config:
       normalize_bert: false
     obj:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
+      remove_obj_txtemb: true
       normalize_bert: false
 
