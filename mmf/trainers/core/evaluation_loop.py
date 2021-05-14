@@ -19,12 +19,11 @@ logger = logging.getLogger(__name__)
 class TrainerEvaluationLoopMixin(ABC):
     def _register_epoch_mode(self):
         # only eval textvqa
-        if registry.get("joint_train", False):
-            if registry.get("only_pretrain", False):
-                current_epoch_mode = registry.get("joint_train_mode")
-            else:
-                current_epoch_mode = "textvqa"
-            registry.register("current_epoch_mode", current_epoch_mode)
+        if registry.get("only_pretrain", False):
+            current_epoch_mode = registry.get("joint_train_mode")
+        else:
+            current_epoch_mode = "textvqa"
+        registry.register("current_epoch_mode", current_epoch_mode)
 
     def evaluation_loop(
         self, loader, use_tqdm: bool = False, single_batch: bool = False
