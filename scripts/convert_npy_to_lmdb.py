@@ -19,19 +19,24 @@ def dict_to_lmdb(out_path, dict_to_save):
 
 
 if __name__ == '__main__':
+    # TODO: consider regenerate lmdb to include train+val+test?
     # load npy file to get filename
-    file_path1 = "/bos/tmp6/zhenfan/VQA/data/data/datasets/textvqa/"
-    file_path2 = "/bos/tmp6/zhenfan/VQA/TextVQA_orig/"
-    train_npy_path = f"{file_path1}defaults/annotations/imdb_train_ocr_azure-clus.npy"
-    val_npy_path = f"{file_path1}defaults/annotations/imdb_val_ocr_azure-clus.npy"
-    
-    base_feat_path = f"{file_path2}OCR/AzureOCR_clus/train_images_ocr_frcnn/"
-    save_lmdb_name = f"{file_path1}ocr_azure-clus/features/ocr_azure-clus_frcn_features.lmdb"
-    
+    file_path1 = "data/data/datasets/textvqa/"
+    # file_path2 = "/bos/tmp6/zhenfan/VQA/TextVQA_orig/"
+    train_npy_path = f"{file_path1}defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy"
+    val_npy_path = f"{file_path1}defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy"
+    test_npy_path = f"{file_path1}defaults/annotations/imdb_test_ocr_azure-v0.npy"
+
+    base_feat_path = f"{file_path1}ocr_azure/features/ocr_azure_frcn_features_all/"
+    save_lmdb_name = f"{file_path1}ocr_azure/features/ocr_azure_frcn_features_all.lmdb"
+
     train_info = np.load(train_npy_path, allow_pickle=True)[1:]
     val_info = np.load(val_npy_path, allow_pickle=True)[1:]
+    test_info = np.load(test_npy_path, allow_pickle=True)[1:]
     # get all filename needed and extract filename.npy features to lmdb
-    feature_paths = list(set([i['feature_path'] for i in itertools.chain(train_info, val_info)]))
+    feature_paths = list(set([i['feature_path'] for i in itertools.chain(train_info, val_info, test_info)]))
+    # record test paths
+    test_paths = set([i['feature_path'] for i in test_info])
     print('Num image feats: {}'.format(len(feature_paths)))
     # load all feat to a dict
     # imgid: train/imgid
@@ -42,7 +47,10 @@ if __name__ == '__main__':
         if not os.path.isfile(filename):
             import pdb; pdb.set_trace()
         data = np.load(filename)
-        imgid = 'train/{}'.format(p.split('.')[0])
+        split = 'train' if p not in test_paths else 'test'
+        imgid = '{}/{}'.format(split, p.split('.')[0])
+        if split == 'test':
+            print(imgid)
         feat = {'features': data, 'source': 'azure'}
         imgid_feat_map[imgid] = feat
 

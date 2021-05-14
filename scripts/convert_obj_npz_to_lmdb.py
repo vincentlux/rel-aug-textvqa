@@ -42,17 +42,18 @@ def load_vocab_file(filename):
 
 if __name__ == '__main__':
     # load and see what is the format of open_images/detectron.lmdb
-    # old_data_name = 'data/data/datasets/textvqa/defaults/features/open_images/detectron.lmdb'
-    # loader = LMDBLoader(old_data_name)
-    # for imgid in loader.get_image_ids():
-    #     pdb.set_trace()
-    #     with loader.env.begin(write=False, buffers=True) as txn:
-    #         image_info = pickle.loads(txn.get(imgid))
-    #     print(image_info)
+    old_data_name = 'data/data/datasets/stvqa/defaults/features/detectron.lmdb'
+    loader = LMDBLoader(old_data_name)
+    for imgid in loader.get_image_ids():
+        pdb.set_trace()
+        with loader.env.begin(write=False, buffers=True) as txn:
+            image_info = pickle.loads(txn.get(imgid))
+        print(image_info)
 
     # ['feature_path', 'features', 'image_height', 'image_width', 'num_boxes', 'objects', 'cls_prob', 'bbox']
-    npz_folder = '/home/vincent/proj/hw/11797/data/textvqa/train_images_frcnn_grid_8'
-    tgt_name = 'data/data/datasets/textvqa/defaults/features/open_images/detectron_attrs_max50_grid8_v0.lmdb'
+    mode = 'test' # 'train'
+    npz_folder = '/home/vincent/proj/hw/11797/data/textvqa/test_images_frcnn'
+    tgt_name = 'data/data/datasets/textvqa/defaults/features/open_images/detectron_attrs_max50_v0_test.lmdb'
 
     vg_objs = load_vocab_file('scripts/objects_vocab.txt')
     vg_attr = load_vocab_file('scripts/attributes_vocab.txt')
@@ -66,8 +67,8 @@ if __name__ == '__main__':
 
             features = data['x']
             bbox = data['bbox']
-            key = 'train/{}'.format(meta['image_id'])
-            feature_path = 'train/{}'.format(meta['image_id'])
+            key = '{}/{}'.format(mode, meta['image_id'])
+            feature_path = '{}/{}'.format(mode, meta['image_id'])
             image_height = meta['image_h']
             image_width = meta['image_w']
             num_boxes = meta['num_boxes']
