@@ -72,7 +72,7 @@ class FeaturesDatabase(ImageDatabase):
         # first stores original feat, second stores joint_train feat
         features = []
         infos = []
-        current_epoch_mode = registry.get("current_epoch_mode")
+        current_epoch_mode = registry.get("current_epoch_mode", no_warning=True)
         for feature_reader in self.feature_readers:
             # if feature_reader.joint_train:
             #     feature, info = feature_reader.read(feat_file[1])
@@ -111,7 +111,7 @@ class FeaturesDatabase(ImageDatabase):
 
     def get(self, item):
         feature_path = item.get(self.feature_key, None)
-        current_epoch_mode = registry.get("current_epoch_mode")
+        current_epoch_mode = registry.get("current_epoch_mode", no_warning=True)
         if feature_path is None:
             feature_path = self._get_feature_path_based_on_image(item)
         # only read related path

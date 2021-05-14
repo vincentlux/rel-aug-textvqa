@@ -118,7 +118,7 @@ class TextVQADataset(MMFDataset):
 
     def _get_current_epoch_mode(self):
         if self.joint_train:
-            return registry.get("current_epoch_mode")
+            return registry.get("current_epoch_mode", no_warning=True)
         else:
             return None
 
@@ -197,6 +197,11 @@ class TextVQADataset(MMFDataset):
                 if k != "max_features":
                     current_sample.image_info_1.pop(k)
         # print("in __getitem__", current_sample.keys())
+        #for key in current_sample:
+         #   if type(current_sample[key]) is torch.Tensor:
+         #       print(key, current_sample[key].size())
+        #    if type(current_sample[key]) is list:
+        #        print(key, len(current_sample[key]))
         return current_sample
 
     def add_sample_details(self, sample_info, sample):
@@ -373,8 +378,8 @@ class TextVQADataset(MMFDataset):
             sample.obj_token_map = []
             sample.combined_obj_token_map = []
             temp_obj_bert_subcontext = []
-            cnt = 0;
-            obj_ptr = 1;
+            cnt = 0
+            obj_ptr = 1
             combined_ptr = len(processed_question["tokens"])
             while (cnt < len(obj_tokens)):
                 sample.obj_token_map.append(obj_ptr)
@@ -533,6 +538,8 @@ class TextVQADataset(MMFDataset):
 
                 if box_key in sample_info and hasattr(self, "copy_processor"):
                     # New imdb format: OCR bounding boxes are already pre-computed
+                    if len(sample_info[box_key].shape) == 1:
+                        sample_info[box_key] = np.tile(sample_info[box_key][:, np.newaxis], (1, 4))
                     this_sample.ocr_bbox_coordinates = self.copy_processor(
                         {"blob": sample_info[box_key]}
                     )["blob"][:max_len]
@@ -616,19 +623,37 @@ class TextVQADataset(MMFDataset):
                     answers_to_add = c.deepcopy(processed_answers)
                     answers_to_add["train_prev_inds"].unsqueeze_(0)
                 else:
-                    answers_to_add["answers_scores"] = torch.cat(
-                        [answers_to_add["answers_scores"], processed_answers["answers_scores"]],
-                        0
-                    )
-                    answers_to_add["train_prev_inds"] = torch.cat(
-                        [answers_to_add["train_prev_inds"], processed_answers["train_prev_inds"].unsqueeze(0)],
-                        0
-                    )
-                    answers_to_add["train_loss_mask"] = torch.cat(
-                        [answers_to_add["train_loss_mask"], processed_answers["train_loss_mask"]],
-                        0
-                    )
-                    answers_to_add["sampled_idx_seq"] += (-1,) + processed_answers["sampled_idx_seq"]
+                    for key in answers_to_add:
+                        if key == "answers":
+                            continue
+                        if key == "train_prev_inds":
+                            answers_to_add["train_prev_inds"] = torch.cat(
+                                [answers_to_add[key], processed_answers[key].unsqueeze(0)],
+                                0
+                            )
+                        elif key == "sampled_idx_seq":
+                            if answers_to_add[key] is not None:
+                                answers_to_add[key] += (-1,) + processed_answers[key]
+                        else:
+                            answers_to_add[key] = torch.cat(
+                                [answers_to_add[key], processed_answers[key]],
+                                0
+                            )
+                    #if i < 10:
+                    #    print(i, answers_to_add.keys(), processed_answers.keys())
+                    #answers_to_add["answers_scores"] = torch.cat(
+                    #    [answers_to_add["answers_scores"], processed_answers["answers_scores"]],
+                    #    0
+                    #)
+                    #answers_to_add["train_prev_inds"] = torch.cat(
+                    #    [answers_to_add["train_prev_inds"], processed_answers["train_prev_inds"].unsqueeze(0)],
+                    #    0
+                    #)
+                    #answers_to_add["train_loss_mask"] = torch.cat(
+                    #    [answers_to_add["train_loss_mask"], processed_answers["train_loss_mask"]],
+                    #    0
+                    #)
+                    #answers_to_add["sampled_idx_seq"] += (-1,) + processed_answers["sampled_idx_seq"]
                 # print("answers_to_add:")
                 # print("answers_scores:", answers_to_add["answers_scores"].shape)
                 # print("train_prev_inds", answers_to_add["train_prev_inds"].shape)

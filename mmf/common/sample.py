@@ -107,6 +107,7 @@ class SampleList(OrderedDict):
         fields = samples[0].keys()
 
         for field in fields:
+           # print(field)
             if isinstance(samples[0][field], torch.Tensor):
                 size = (len(samples), *samples[0][field].size())
                 self[field] = samples[0][field].new_empty(size)
@@ -116,6 +117,9 @@ class SampleList(OrderedDict):
                 self[field] = [None for _ in range(len(samples))]
 
             for idx, sample in enumerate(samples):
+                #if field == "ocr_bbox_coordinates":
+                    #print(sample[field].shape)
+                    #print(sample[field])
                 # it should be a tensor but not a 0-d tensor
                 if (
                     isinstance(sample[field], torch.Tensor)
