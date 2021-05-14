@@ -347,6 +347,8 @@ class TextVQADataset(MMFDataset):
 
             if box_key in sample_info and hasattr(self, "copy_processor"):
                 # New imdb format: OCR bounding boxes are already pre-computed
+                if len(sample_info[box_key].shape) == 1:
+                    sample_info[box_key] = np.tile(sample_info[box_key][:, np.newaxis], (1, 4))
                 this_sample.ocr_bbox_coordinates = self.copy_processor(
                     {"blob": sample_info[box_key]}
                 )["blob"][:max_len]
@@ -423,19 +425,37 @@ class TextVQADataset(MMFDataset):
                 answers_to_add = c.deepcopy(processed_answers)
                 answers_to_add["train_prev_inds"].unsqueeze_(0)
             else:
-                answers_to_add["answers_scores"] = torch.cat(
-                    [answers_to_add["answers_scores"], processed_answers["answers_scores"]],
-                    0
-                )
-                answers_to_add["train_prev_inds"] = torch.cat(
-                    [answers_to_add["train_prev_inds"], processed_answers["train_prev_inds"].unsqueeze(0)],
-                    0
-                )
-                answers_to_add["train_loss_mask"] = torch.cat(
-                    [answers_to_add["train_loss_mask"], processed_answers["train_loss_mask"]],
-                    0
-                )
-                answers_to_add["sampled_idx_seq"] += (-1, ) + processed_answers["sampled_idx_seq"]
+                for key in answers_to_add:
+                    if key == "answers":
+                        continue
+                    if key == "train_prev_inds":
+                        answers_to_add["train_prev_inds"] = torch.cat(
+                            [answers_to_add[key], processed_answers[key].unsqueeze(0)],
+                            0
+                        )
+                    elif key == "sampled_idx_seq":
+                        if answers_to_add[key] is not None:
+                            answers_to_add[key] += (-1,) + processed_answers[key]
+                    else:
+                        answers_to_add[key] = torch.cat(
+                            [answers_to_add[key], processed_answers[key]],
+                            0
+                        )
+                # if i < 10:
+                #    print(i, answers_to_add.keys(), processed_answers.keys())
+                # answers_to_add["answers_scores"] = torch.cat(
+                #    [answers_to_add["answers_scores"], processed_answers["answers_scores"]],
+                #    0
+                # )
+                # answers_to_add["train_prev_inds"] = torch.cat(
+                #    [answers_to_add["train_prev_inds"], processed_answers["train_prev_inds"].unsqueeze(0)],
+                #    0
+                # )
+                # answers_to_add["train_loss_mask"] = torch.cat(
+                #    [answers_to_add["train_loss_mask"], processed_answers["train_loss_mask"]],
+                #    0
+                # )
+                # answers_to_add["sampled_idx_seq"] += (-1,) + processed_answers["sampled_idx_seq"]
             #print("answers_to_add:")
             #print("answers_scores:", answers_to_add["answers_scores"].shape)
             #print("train_prev_inds", answers_to_add["train_prev_inds"].shape)

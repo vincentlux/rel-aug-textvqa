@@ -207,11 +207,13 @@ class M4C(BaseModel):
         scores = None
         updated_target = None
         mlm_labels = None
+        is_test = "targets" not in sample_list
         if not self.pretrain_mlm:
-            target_size = sample_list.targets.size()
-            target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
-            updated_loss_mask = None
-            loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
+            if not is_test:
+                target_size = sample_list.targets.size()
+                target = sample_list.targets.view(target_size[0], sample_list.ocr_source_num[0], -1, target_size[-1])
+                updated_loss_mask = None
+                loss_mask = sample_list.train_loss_mask.view(target_size[0], sample_list.ocr_source_num[0], -1)
         for i in range(sample_list["ocr_source_num"][0]):
             sample_list["current_source"] = i
             self._forward_txt_encoding(sample_list, fwd_results)
@@ -236,8 +238,9 @@ class M4C(BaseModel):
                         max_conf = fwd_results["conf"]
                         scores = fwd_results["scores"]
                         pred_source = torch.zeros_like(max_conf).to(torch.long)
-                        updated_target = target[:, 0]
-                        updated_loss_mask = loss_mask[:, 0]
+                        if not is_test:
+                            updated_target = target[:, 0]
+                            updated_loss_mask = loss_mask[:, 0]
                 else:
                     if self.pretrain_mlm:
                         scores = torch.cat([scores, fwd_results["scores"]], 1)
@@ -246,15 +249,16 @@ class M4C(BaseModel):
                         current_source = torch.ones_like(pred_source) * i
                         pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
                         scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
-                        updated_target = torch.where(
-                            (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
-                            updated_target,
-                            target[:, i])
-                        updated_loss_mask = torch.where(
-                            (max_conf > fwd_results["conf"]).unsqueeze(-1),
-                            updated_loss_mask,
-                            loss_mask[:, i]
-                        )
+                        if not is_test:
+                            updated_target = torch.where(
+                                (max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1),
+                                updated_target,
+                                target[:, i])
+                            updated_loss_mask = torch.where(
+                                (max_conf > fwd_results["conf"]).unsqueeze(-1),
+                                updated_loss_mask,
+                                loss_mask[:, i]
+                            )
                         max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
         # only keep scores in the forward pass results
@@ -269,8 +273,9 @@ class M4C(BaseModel):
         #    print(pred_source.shape)
         #    print(pred_source)
         #    print(updated_target.shape)
-            sample_list.targets = updated_target
-            sample_list.train_loss_mask = updated_loss_mask
+            if not is_test:
+                sample_list.targets = updated_target
+                sample_list.train_loss_mask = updated_loss_mask
             for i in range(sample_list["ocr_source_num"][0]):
                 sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
             results = {"scores": scores, "source": pred_source}
