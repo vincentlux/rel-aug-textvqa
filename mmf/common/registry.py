@@ -438,6 +438,8 @@ class Registry:
                 "Key {} is not present in registry, returning default value "
                 "of {}".format(original_name, default)
             )
+            if original_name == "current_epoch_mode":
+                raise ValueError
         return value
 
     @classmethod
