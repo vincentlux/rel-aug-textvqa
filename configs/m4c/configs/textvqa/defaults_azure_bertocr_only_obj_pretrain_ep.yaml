@@ -3,14 +3,17 @@ includes:
 
 training:
   max_updates: 48000
-  batch_size: 32
+  batch_size: 128
   num_workers: 0
   mlflow: true
-  evaluation_freq: epoch
-  evaluation_interval: 1
+  evaluation_freq: iter
+  evaluation_interval: 1000
   lr_steps:
     - 14000
     - 19000
+  early_stop:
+    criteria: textvqa/accuracy
+    minimize: false
 
 
 dataset_config:
@@ -64,7 +67,7 @@ model_config:
       - type: cross_entropy
     joint_train:
       task: obj_pretrain
-      only_pretrain: false
+      only_pretrain: true
       format: epoch
       train_first: obj_pretrain # obj_pretrain/textvqa (indicate which task to be trained first)
       stop_pretrain_epoch: 16
@@ -78,3 +81,9 @@ model_config:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
       remove_obj_txtemb: true
       normalize_bert: false
+
+evaluation:
+  metrics:
+  - accuracy
+  predict: false
+  predict_file_format: json

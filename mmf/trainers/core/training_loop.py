@@ -53,16 +53,19 @@ class TrainerTrainingLoopMixin(ABC):
             registry.register("current_epoch", self.current_epoch)
 
             if registry.get("joint_train", False):
-                # indicate whether stop pretrain or not
-                stop_pretrain_epoch = registry.get("stop_pretrain_epoch")
-                if self.current_epoch > stop_pretrain_epoch:
-                    print(f"Stopped pretraining after epoch {stop_pretrain_epoch}")
-                    current_epoch_mode = "textvqa"
+                if registry.get("only_pretrain", False):
+                    current_epoch_mode = registry.get("joint_train_mode")
                 else:
-                    joint_train_mode = registry.get("joint_train_mode")
-                    # indicate which task to be used for first epoch
-                    ind = 1 if registry.get("train_first") == "textvqa" else 0
-                    current_epoch_mode = "textvqa" if self.current_epoch % 2 == ind else joint_train_mode
+                    # indicate whether stop pretrain or not
+                    stop_pretrain_epoch = registry.get("stop_pretrain_epoch")
+                    if self.current_epoch > stop_pretrain_epoch:
+                        print(f"Stopped pretraining after epoch {stop_pretrain_epoch}")
+                        current_epoch_mode = "textvqa"
+                    else:
+                        joint_train_mode = registry.get("joint_train_mode")
+                        # indicate which task to be used for first epoch
+                        ind = 1 if registry.get("train_first") == "textvqa" else 0
+                        current_epoch_mode = "textvqa" if self.current_epoch % 2 == ind else joint_train_mode
 
                 registry.register("current_epoch_mode", current_epoch_mode)
             else:

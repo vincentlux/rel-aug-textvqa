@@ -245,6 +245,8 @@ class Configuration:
                 registry.register('train_first', train_first)
                 stop_pretrain_epoch = self.config.model_config[cfg].joint_train.stop_pretrain_epoch
                 registry.register('stop_pretrain_epoch', stop_pretrain_epoch)
+                only_pretrain = self.config.model_config[cfg].joint_train.only_pretrain
+                registry.register('only_pretrain', only_pretrain)
                 break
 
     def _build_default_config(self):

@@ -48,7 +48,6 @@ class EarlyStopping:
         """
         if not is_master():
             return False
-
         value = meter.meters.get(self.early_stop_criteria, None)
         if value is None:
             raise ValueError(

@@ -1,6 +1,16 @@
 
 model_config:
   m4c:
+    ocr:
+      encode_concat: true
+      remove_ocr_posemb: false
+      text_embedding: bert
+      mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
+      normalize_bert: false
+    obj:
+      mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
+      remove_obj_txtemb: true
+      normalize_bert: false
     losses:
     - type: m4c_decoding_bce_with_mask
 
@@ -54,10 +64,18 @@ dataset_config:
         params:
           max_length: 50
       context_processor:
-        type: fasttext
+        type: bert_tokenizer
         params:
-          max_length: 50
-          model_file: wiki.en.bin
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 250
+#      context_processor:
+#        type: bert
+#        params:
+#          max_length: 50
+#          model_file: wiki.en.bin
       ocr_token_processor:
         type: simple_word
         params: {}
@@ -76,7 +94,9 @@ dataset_config:
     return_features_info: true
     use_ocr: true
     use_ocr_info: true
-    use_order_vectors: true
+    use_order_vectors: false
+    use_ocr_word_position: true
+    pos_emb_length: 20
 
 optimizer:
   params:
@@ -103,11 +123,12 @@ training:
     warmup_factor: 0.2
     warmup_iterations: 1000
     max_updates: 24000
-    batch_size: 128
-    num_workers: 4
+    batch_size: 32
+    num_workers: 0
     task_size_proportional_sampling: true
     early_stop:
       criteria: stvqa/stvqa_accuracy
       minimize: false
     tensorboard: false
     mlflow: true
+    evaluation_interval: 1000

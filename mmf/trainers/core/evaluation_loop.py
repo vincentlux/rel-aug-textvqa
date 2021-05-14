@@ -17,19 +17,24 @@ logger = logging.getLogger(__name__)
 
 
 class TrainerEvaluationLoopMixin(ABC):
+    def _register_epoch_mode(self):
+        # only eval textvqa
+        if registry.get("joint_train", False):
+            if registry.get("only_pretrain", False):
+                current_epoch_mode = registry.get("joint_train_mode")
+            else:
+                current_epoch_mode = "textvqa"
+            registry.register("current_epoch_mode", current_epoch_mode)
+
     def evaluation_loop(
         self, loader, use_tqdm: bool = False, single_batch: bool = False
     ) -> Tuple[Dict[str, Any], Type[Meter]]:
         meter = Meter()
-
+        self._register_epoch_mode()
         with torch.no_grad():
             self.model.eval()
             disable_tqdm = not use_tqdm or not is_master()
             combined_report = None
-            # only eval textvqa
-            if registry.get("joint_train", False):
-                current_epoch_mode = "textvqa"
-                registry.register("current_epoch_mode", current_epoch_mode)
 
             for batch in tqdm.tqdm(loader, disable=disable_tqdm):
                 report = self._forward(batch)
@@ -55,6 +60,7 @@ class TrainerEvaluationLoopMixin(ABC):
         return combined_report, meter
 
     def prediction_loop(self, dataset_type: str) -> None:
+        self._register_epoch_mode()
         reporter = self.dataset_loader.get_test_reporter(dataset_type)
         with torch.no_grad():
             self.model.eval()

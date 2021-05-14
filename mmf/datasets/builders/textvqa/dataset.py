@@ -142,7 +142,7 @@ class TextVQADataset(MMFDataset):
             print(f"changing model from {self.current_epoch_mode} to {current_epoch_mode}")
             self.update_current_epoch_mode(current_epoch_mode)
             # build_annotation_db so that the obj pretrain data will include new sampled data
-            if self.use_all_pretrain_data and self.current_epoch_mode != "textvqa":
+            if self.dataset_type == 'train' and self.use_all_pretrain_data and self.current_epoch_mode != "textvqa":
                 self.build_annotation_db()
 
         sample_info = self.annotation_db[idx]
