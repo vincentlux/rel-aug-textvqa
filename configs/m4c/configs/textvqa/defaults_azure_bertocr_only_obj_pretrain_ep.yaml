@@ -79,7 +79,7 @@ model_config:
       normalize_bert: false
     obj:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
-      remove_obj_txtemb: true
+      remove_obj_txtemb: false
       normalize_bert: false
 
 evaluation:
