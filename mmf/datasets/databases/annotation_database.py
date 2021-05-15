@@ -137,10 +137,10 @@ class AnnotationDatabase(torch.utils.data.Dataset):
 
         print(len(new_data))
 
-        id2idx = {self.data[i]["question"]+self.data[i]["image_id"]: i for i in range(self.start_idx, len(self.data))}
+        id2idx = {self.data[i]["question"]+str(self.data[i]["image_id"]): i for i in range(self.start_idx, len(self.data))}
 
         for i in trange(new_start_idx, len(new_data)):
-            idx = id2idx[new_data[i]["question"]+new_data[i]["image_id"]]
+            idx = id2idx[new_data[i]["question"]+str(new_data[i]["image_id"])]
             self.data[idx][f"ocr_info_{self.load_file_num}"] = new_data[i]["ocr_info"]
             self.data[idx][f"ocr_tokens_{self.load_file_num}"] = new_data[i]["ocr_tokens"]
             self.data[idx][f"ocr_normalized_boxes_{self.load_file_num}"] = new_data[i]["ocr_normalized_boxes"]

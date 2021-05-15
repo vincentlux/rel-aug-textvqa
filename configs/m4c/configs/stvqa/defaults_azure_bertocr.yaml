@@ -21,18 +21,18 @@ dataset_config:
     - stvqa.ocr_en
     features:
       train:
-      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       val:
-      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
       test:
-      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
     annotations:
       train:
-      - stvqa/defaults/annotations/imdb_subtrain.npy
+      - stvqa/defaults/annotations/azure_st_subtrain-v0.npy,stvqa/defaults/annotations/imdb_subtrain-v0.npy
       val:
-      - stvqa/defaults/annotations/imdb_subval.npy
+      - stvqa/defaults/annotations/azure_st_subval-v0.npy,stvqa/defaults/annotations/imdb_subval-v0.npy
       test:
-      - stvqa/defaults/annotations/imdb_test_task3.npy
+      - stvqa/defaults/annotations/azure_st_subtest-v0.npy,stvqa/defaults/annotations/imdb_test_task3-v0.npy
     processors:
       text_processor:
         type: bert_tokenizer
@@ -123,7 +123,7 @@ training:
     warmup_factor: 0.2
     warmup_iterations: 1000
     max_updates: 24000
-    batch_size: 32
+    batch_size: 16
     num_workers: 0
     task_size_proportional_sampling: true
     early_stop:
@@ -131,4 +131,4 @@ training:
       minimize: false
     tensorboard: false
     mlflow: true
-    evaluation_interval: 1000
+    evaluation_interval: 10

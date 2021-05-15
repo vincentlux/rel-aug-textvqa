@@ -1,0 +1,71 @@
+includes:
+- ./defaults.yaml
+
+training:
+  seed: 37796327
+  max_updates: 48000
+  num_workers: 0
+  mlflow: true
+  batch_size: 32
+  evaluation_interval: 1000
+  lr_steps:
+  - 14000
+  - 19000
+
+dataset_config:
+  textvqa:
+    use_images: false
+    use_features: true
+    max_features: 100
+    #zoo_requirements:
+    #- textvqa.defaults
+    #- textvqa.ocr_en
+    features:
+      train:
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      val:
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+      test:
+      - textvqa/defaults/features/open_images/detectron_attrs_max50_v0_test.lmdb,textvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,textvqa/ocr_en/features/ocr_en_frcn_features.lmdb
+    annotations:
+      train:
+      - textvqa/defaults/annotations/imdb_train_ocr_azure_HQcluster-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy
+      - stvqa/defaults/annotations/imdb_train_ocr_azure_HQcluster-unsorted-v0.npy,stvqa/defaults/annotations/imdb_subtrain-v0.npy
+      val:
+      - textvqa/defaults/annotations/imdb_val_ocr_azure_HQcluster-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy
+      test:
+      - textvqa/defaults/annotations/imdb_test_ocr_azure_HQcluster-unsorted-v0.npy,textvqa/defaults/annotations/imdb_test_ocr_en-v0.npy
+    processors:
+      context_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 250
+      obj_text_processor:
+        type: bert_tokenizer
+        params:
+          tokenizer_config:
+            type: bert-base-uncased
+            params:
+              do_lower_case: true
+          max_seq_length: 100
+    use_ocr_word_position: true
+    pos_emb_length: 20
+
+
+model_config:
+  m4c:
+    ocr:
+      encode_concat: true
+      remove_ocr_posemb: false
+      text_embedding: bert
+      mmt_in_dim: 3480  # 768 (TEXT, 300 for fasttext) + 604 (PHOC) + 2048 (Faster R-CNN) + 0 (all zeros; legacy)
+      normalize_bert: false
+    obj:
+      mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
+      remove_obj_txtemb: false
+      normalize_bert: false

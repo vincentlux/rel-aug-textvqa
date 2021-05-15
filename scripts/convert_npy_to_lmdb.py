@@ -21,13 +21,14 @@ def dict_to_lmdb(out_path, dict_to_save):
 if __name__ == '__main__':
     # TODO: consider regenerate lmdb to include train+val+test?
     # load npy file to get filename
-    file_path1 = "data/data/datasets/textvqa/"
+    dataset = "stvqa" # textvqa
+    file_path1 = "data/data/datasets/stvqa/"
     # file_path2 = "/bos/tmp6/zhenfan/VQA/TextVQA_orig/"
-    train_npy_path = f"{file_path1}defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy"
-    val_npy_path = f"{file_path1}defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy"
-    test_npy_path = f"{file_path1}defaults/annotations/imdb_test_ocr_azure-v0.npy"
+    train_npy_path = f"{file_path1}defaults/annotations/azure_st_subtrain.npy"
+    val_npy_path = f"{file_path1}defaults/annotations/azure_st_subval.npy"
+    test_npy_path = f"{file_path1}defaults/annotations/azure_st_subtest.npy"
 
-    base_feat_path = f"{file_path1}ocr_azure/features/ocr_azure_frcn_features_all/"
+    base_feat_path = f"{file_path1}ocr_azure/features/stvqa_ocr_frcnn/"
     save_lmdb_name = f"{file_path1}ocr_azure/features/ocr_azure_frcn_features_all.lmdb"
 
     train_info = np.load(train_npy_path, allow_pickle=True)[1:]
@@ -47,10 +48,16 @@ if __name__ == '__main__':
         if not os.path.isfile(filename):
             import pdb; pdb.set_trace()
         data = np.load(filename)
-        split = 'train' if p not in test_paths else 'test'
-        imgid = '{}/{}'.format(split, p.split('.')[0])
-        if split == 'test':
-            print(imgid)
+        if dataset == 'textvqa':
+            split = 'train' if p not in test_paths else 'test'
+            imgid = '{}/{}'.format(split, p.split('.')[0])
+            if split == 'test':
+                print(imgid)
+        elif dataset == 'stvqa':
+            split = 'train' if p not in test_paths else 'test_task3'
+            imgid = '{}/{}'.format(split, p.split('.')[0])
+            if split == 'test':
+                print(imgid)
         feat = {'features': data, 'source': 'azure'}
         imgid_feat_map[imgid] = feat
 

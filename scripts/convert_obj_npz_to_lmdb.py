@@ -7,30 +7,6 @@ from tqdm import tqdm
 from scripts.convert_npy_to_lmdb import dict_to_lmdb
 
 
-class LMDBLoader:
-    def __init__(self, db_path):
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self):
-        self.env = lmdb.open(
-            self.db_path,
-            subdir=os.path.isdir(self.db_path),
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
-        with self.env.begin(write=False, buffers=True) as txn:
-            self.image_ids = pickle.loads(txn.get(b"keys"))
-            self.image_id_indices = {
-                self.image_ids[i]: i for i in range(0, len(self.image_ids))
-            }
-
-    def get_image_ids(self):
-        return self.image_ids
-
-
 
 def load_vocab_file(filename):
     objects = []
@@ -40,15 +16,13 @@ def load_vocab_file(filename):
     id_objects_map = {i: v for i, v in enumerate(objects)}
     return id_objects_map
 
+def get_imgids(npy_path):
+    info = np.load(npy_path, allow_pickle=True)[1:]
+    imgids = set([i['feature_path'].split('.')[0] for i in info])
+    return imgids
+
+
 if __name__ == '__main__':
-    # load and see what is the format of open_images/detectron.lmdb
-    # old_data_name = 'data/data/datasets/stvqa/defaults/features/detectron.lmdb'
-    # loader = LMDBLoader(old_data_name)
-    # for imgid in loader.get_image_ids():
-    #     pdb.set_trace()
-    #     with loader.env.begin(write=False, buffers=True) as txn:
-    #         image_info = pickle.loads(txn.get(imgid))
-    #     print(image_info)
 
     # ['feature_path', 'features', 'image_height', 'image_width', 'num_boxes', 'objects', 'cls_prob', 'bbox']
     dataset = 'stvqa' # 'textvqa'
@@ -59,6 +33,10 @@ if __name__ == '__main__':
         npz_files = [os.path.join(dp, f) for dp, dn, fn in os.walk(npz_folder) for f in fn]
         # silly way of removing root path
         npz_files = [i.replace(npz_folder, '') for i in npz_files]
+        # need to judge if it is train or test_task3
+        test_npy_path = f"data/data/datasets/stvqa/defaults/annotations/azure_st_subtest.npy"
+        test_imgids = get_imgids(test_npy_path)
+
     elif dataset == 'textvqa':
         mode = 'test' # 'train'
         npz_folder = '/home/vincent/proj/hw/11797/data/textvqa/test_images_frcnn'
@@ -77,12 +55,11 @@ if __name__ == '__main__':
 
             features = data['x']
             bbox = data['bbox']
-            if dataset == 'textvqa':
-                key = '{}/{}'.format(mode, meta['image_id'])
-                feature_path = '{}/{}'.format(mode, meta['image_id'])
-            elif dataset == 'stvqa':
-                key = meta['image_id']
-                feature_path = meta['image_id']
+            # for stvqa, we need to judge whether one imgid belong to train or test_task3
+            if dataset == 'stvqa':
+                mode = 'test_task3' if meta['image_id'] in test_imgids else 'train'
+            key = '{}/{}'.format(mode, meta['image_id'])
+            feature_path = '{}/{}'.format(mode, meta['image_id'])
 
             image_height = meta['image_h']
             image_width = meta['image_w']

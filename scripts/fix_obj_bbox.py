@@ -60,16 +60,16 @@ if __name__ == "__main__":
     matching_lmdb = "detectron_attrs_max50_v0.lmdb"
     fixed_version = "v0"
 
-    err_dir = "data/data/datasets/textvqa/defaults/annotations"
+    dataset = 'textvqa'
+
+    err_dir = f"data/data/datasets/{dataset}/defaults/annotations"
     err_npys = [
-        # "imdb_train_ocr_azure-clus-unsorted",
-        # "imdb_val_ocr_azure-clus-unsorted",
-        # "imdb_train_ocr_en",
-        # "imdb_val_ocr_en"
-        "imdb_test_ocr_azure",
-        "imdb_test_ocr_en"
+        # "imdb_train_ocr_azure_HQcluster-unsorted",
+        # "imdb_val_ocr_azure_HQcluster-unsorted",
+        "imdb_test_ocr_azure_HQcluster-unsorted",
         ]
-    src_dir = "/home/vincent/proj/hw/11797/data/textvqa/test_images_frcnn"
+    # dir where obj npz files being saved (from bottom_up_attention.pytorch)
+    src_dir = f"/home/vincent/proj/hw/11797/data/{dataset}/test_images_frcnn"
 
     correct_data_map = {}
     for f in err_npys:
@@ -79,7 +79,11 @@ if __name__ == "__main__":
             if "image_id" not in d:
                 print(f"skipped {d}")
                 continue
-            fname = d['image_id']
+            if dataset == 'textvqa':
+                fname = d['image_id']
+            elif dataset == 'stvqa':
+                fname = d['feature_path'].split('.')[0]
+
             if fname not in correct_data_map:
                 data = np.load(os.path.join(src_dir, f"{fname}.npz"), allow_pickle=True)
                 bbox = data["bbox"]

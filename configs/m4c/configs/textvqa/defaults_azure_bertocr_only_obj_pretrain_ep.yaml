@@ -2,7 +2,7 @@ includes:
 - ./defaults.yaml
 
 training:
-  max_updates: 48000
+  max_updates: 24000
   batch_size: 128
   num_workers: 0
   mlflow: true
@@ -35,9 +35,9 @@ dataset_config:
       train:
       - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
       val:
-      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy,vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent_v1.npy
       test:
-      - textvqa/defaults/annotations/imdb_train_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_train_ocr_en-v0.npy,vg/defaults/annotations/imdb_train_nms_0.1_rm_dup_sent_v1.npy
+      - textvqa/defaults/annotations/imdb_val_ocr_azure-clus-unsorted-v0.npy,textvqa/defaults/annotations/imdb_val_ocr_en-v0.npy,vg/defaults/annotations/imdb_val_nms_0.1_rm_dup_sent_v1.npy
     processors:
       context_processor:
         type: bert_tokenizer
@@ -63,7 +63,7 @@ dataset_config:
 model_config:
   m4c:
     losses:
-      - type: m4c_decoding_bce_with_mask
+#      - type: m4c_decoding_bce_with_mask
       - type: cross_entropy
     joint_train:
       task: obj_pretrain
