@@ -27,7 +27,7 @@ dataset_config:
       test:
       - stvqa/defaults/features/detectron_attrs_max50_v0.lmdb,stvqa/ocr_azure/features/ocr_azure_frcn_features_all.lmdb,stvqa/ocr_en/features/ocr_en_frcn_features.lmdb
     annotations:
-      train:
+      train: # TODO: change to clus data you want
       - stvqa/defaults/annotations/azure_st_subtrain-v0.npy,stvqa/defaults/annotations/imdb_subtrain-v0.npy
       val:
       - stvqa/defaults/annotations/azure_st_subval-v0.npy,stvqa/defaults/annotations/imdb_subval-v0.npy
@@ -122,8 +122,8 @@ training:
     use_warmup: true
     warmup_factor: 0.2
     warmup_iterations: 1000
-    max_updates: 24000
-    batch_size: 16
+    max_updates: 48000
+    batch_size: 32
     num_workers: 0
     task_size_proportional_sampling: true
     early_stop:
@@ -131,4 +131,4 @@ training:
       minimize: false
     tensorboard: false
     mlflow: true
-    evaluation_interval: 10
+    evaluation_interval: 1000
