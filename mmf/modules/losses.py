@@ -575,6 +575,40 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
         return loss
 
 
+@registry.register_loss("m4c_selector_cross_entropy")
+class M4CSelectorCrossEntropy(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.one = torch.Tensor([1.0])
+
+    def forward(self, sample_list, model_output):
+        selector_scores = model_output["selector_scores"]
+        if len(selector_scores.size()) == 1 or selector_scores.size(1) == 1:
+            return 0.
+        else:
+            scores = model_output["scores"]
+            targets = sample_list["targets"]
+            loss_mask = sample_list["train_loss_mask"]
+            assert scores.dim() == 3 and loss_mask.dim() == 2
+
+            losses = F.binary_cross_entropy_with_logits(scores, targets, reduction="none")
+            losses *= loss_mask.unsqueeze(-1)
+            ocr_source_num = registry.get("ocr_source_num", None)
+            if ocr_source_num is None:
+                registry.register("ocr_source_num", 2)
+            losses = losses.view(losses.size(0), ocr_source_num, -1, losses.size(-1))
+            losses = torch.sum(torch.sum(losses, -1), -1)
+            for i in range(losses.size(0)):
+                for j in range(losses.size(1)):
+                    if losses[i][j] < 1e-8:
+                        losses[i][j] = 1e7
+            labels = torch.argmin(losses, -1).detach()
+            loss = F.cross_entropy(selector_scores, labels, reduction="none")
+
+            loss = torch.mean(loss)
+            return loss
+
+
 @registry.register_loss("cross_entropy")
 class CrossEntropyLoss(nn.Module):
     def __init__(self, params=None):
