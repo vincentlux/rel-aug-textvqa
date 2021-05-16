@@ -30,6 +30,7 @@ class AnnotationDatabase(torch.utils.data.Dataset):
         self.joint_train = registry.get("joint_train")
         self.load_annotation_db(paths)
         print("in __init__ of annotation_database\n", self.load_file_num)
+        registry.register("ocr_source_num", self.load_file_num)
         print(self.data[1].keys())
         self.post_processing()
 

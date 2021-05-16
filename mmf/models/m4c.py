@@ -47,6 +47,7 @@ class M4C(BaseModel):
         #self._build_ocrtxt_encoding()
         self._build_mmt()
         self._build_output()
+        self._build_selector()
 
     def _build_encoder_config(self):
         return OmegaConf.create(
@@ -218,6 +219,15 @@ class M4C(BaseModel):
             logger.info(f"Set current ep mode from {self.current_epoch_mode} to {current_epoch_mode}")
             self.current_epoch_mode = current_epoch_mode
 
+    def _build_selector(self):
+        # TODO: should not be fixed
+        mmt_length = 182
+        feature_size = 768
+        dec_length = 12
+        ocr_source = registry.get("ocr_source_num", 2)
+        self.ocr_selector = OcrSelector(
+            mmt_length, feature_size, dec_length, ocr_source
+        )
 
     def forward(self, sample_list):
         # print("In model m4c forward, sample_list:\n", sample_list.keys())
@@ -231,7 +241,6 @@ class M4C(BaseModel):
             self._forward_obj_encoding(sample_list, fwd_results)
             self._forward_ocr_encoding(sample_list, fwd_results)
             self._forward_mmt_and_output(sample_list, fwd_results)
-
             # only keep scores in the forward pass results
             results = {"scores": fwd_results["scores"]}
             return results
@@ -244,9 +253,12 @@ class M4C(BaseModel):
             max_conf = -10000000
             pred_source = None
             scores = None
+            all_scores = []
             updated_target = None
             mlm_labels = None
             is_test = "targets" not in sample_list
+            mmt_outputs = []
+            confs_outputs = []
             if not self.pretrain_mlm:
                 if not is_test:
                     target_size = sample_list.targets.size()
@@ -259,6 +271,9 @@ class M4C(BaseModel):
                 self._forward_obj_encoding(sample_list, fwd_results)
                 self._forward_ocr_encoding(sample_list, fwd_results)
                 self._forward_mmt_and_output(sample_list, fwd_results)
+                mmt_outputs.append(fwd_results["mmt_seq_output"].transpose(1, 2))
+                confs_outputs.append(fwd_results["confs"])
+                #print(mmt_outputs[-1].shape, confs_outputs[-1].shape)
                 if self.training:
                     if i == 0:
                         scores = fwd_results["scores"]
@@ -276,6 +291,7 @@ class M4C(BaseModel):
                         else:
                             max_conf = fwd_results["conf"]
                             scores = fwd_results["scores"]
+                            all_scores.append(fwd_results["scores"])
                             pred_source = torch.zeros_like(max_conf).to(torch.long)
                             if not is_test:
                                 updated_target = target[:, 0]
@@ -285,6 +301,7 @@ class M4C(BaseModel):
                             scores = torch.cat([scores, fwd_results["scores"]], 1)
                             mlm_labels = torch.cat([mlm_labels, fwd_results["mlm_labels"]], 1)
                         else:
+                            all_scores.append(fwd_results["scores"])
                             current_source = torch.ones_like(pred_source) * i
                             pred_source = torch.where(max_conf > fwd_results["conf"], pred_source, current_source)
                             scores = torch.where((max_conf > fwd_results["conf"]).unsqueeze(-1).unsqueeze(-1), scores, fwd_results["scores"])
@@ -300,6 +317,12 @@ class M4C(BaseModel):
                                 )
                             max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
+            sample_list["mmt_outputs"] = mmt_outputs
+            sample_list["confs_outputs"] = confs_outputs
+            if self.config.use_selector:
+                self._forward_selector(sample_list, fwd_results)
+            #print(torch.argmax(fwd_results["selector_score"], -1))
+
             # only keep scores in the forward pass results
             #print("in forward:")
             #print("scores:", scores.shape)
@@ -309,17 +332,26 @@ class M4C(BaseModel):
                 return results
 
             if not self.training:
-            #    print(pred_source.shape)
-            #    print(pred_source)
-            #    print(updated_target.shape)
                 if not is_test:
                     sample_list.targets = updated_target
                     sample_list.train_loss_mask = updated_loss_mask
                 for i in range(sample_list["ocr_source_num"][0]):
                     sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
-                results = {"scores": scores, "source": pred_source}
+                if self.config.use_selector:
+                    pred_source_by_selector = torch.argmax(fwd_results["selector_score"], -1)
+                    scores_by_selector = torch.zeros_like(scores)
+                    for i in range(pred_source.size(0)):
+                        scores_by_selector[i] = all_scores[pred_source_by_selector[i].item()][i]
+                    results = {"scores": scores_by_selector,
+                               "source": pred_source_by_selector,
+                               "selector_scores": fwd_results["selector_score"]}
+                else:
+                    results = {"scores": scores, "source": pred_source}
             else:
-                results = {"scores": scores}
+                if self.config.use_selector:
+                    results = {"scores": scores, "selector_scores": fwd_results["selector_score"]}
+                else:
+                    results = {"scores": scores}
             return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
@@ -578,6 +610,8 @@ class M4C(BaseModel):
             prev_inds=fwd_results["prev_inds"] if not self.pretrain_mlm else None,
             pretrain_mlm=self.pretrain_mlm,
         )
+        # for key in mmt_results:
+        #    print(key, mmt_results[key].shape)
         fwd_results.update(mmt_results)
 
     def _forward_output(self, sample_list, fwd_results):
@@ -636,6 +670,8 @@ class M4C(BaseModel):
                 fwd_results["prev_inds"] = sample_list.train_prev_inds[:, sample_list.current_source,:].clone()
                 self._forward_mmt(sample_list, fwd_results)
                 self._forward_output(sample_list, fwd_results)
+                fwd_results["confs"] = torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0]
+                fwd_results["conf"] = torch.sum(fwd_results["confs"], -1)
             else:
                 dec_step_num = sample_list.train_prev_inds.size(-1)
                 # print(self.config.beam_size)
@@ -654,7 +690,9 @@ class M4C(BaseModel):
                         # decoding
                         argmax_inds = fwd_results["scores"].argmax(dim=-1)
                         fwd_results["prev_inds"][:, 1:] = argmax_inds[:, :-1]
-                    fwd_results["conf"] = torch.sum(torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0], -1)
+
+                    fwd_results["confs"] = torch.max(F.log_softmax(fwd_results["scores"], -1), -1)[0]
+                    fwd_results["conf"] = torch.sum(fwd_results["confs"], -1)
                 else:
                     batch_size = sample_list.train_prev_inds.size(0)
                     fwd_results["scores"] = None
@@ -738,6 +776,13 @@ class M4C(BaseModel):
                             fwd_results["scores"] = scores
                         else:
                             fwd_results["scores"] = torch.cat([fwd_results["scores"], scores], 0)
+
+    def _forward_selector(self, sample_list, fwd_results):
+        mmt_outputs = sample_list["mmt_outputs"]
+        confs_outputs = sample_list["confs_outputs"]
+        selector_score = self.ocr_selector(mmt_outputs, confs_outputs)
+        fwd_results["selector_score"] = selector_score
+        #print(selector_score)
 
     def get_optimizer_parameters(self, config):
         optimizer_param_groups = []
@@ -1025,6 +1070,89 @@ class PrevPredEmbeddings(nn.Module):
         dec_emb = raw_dec_emb + embeddings
 
         return dec_emb
+
+
+class OcrSelector(nn.Module):
+    def __init__(self, mmt_length, feature_size, dec_length, ocr_source):
+        super().__init__()
+        self.mode = 5
+        if self.mode == 1:
+            self.mmt_layer_1 = nn.Linear(mmt_length, 8)
+            self.mmt_layer_2 = nn.Linear(feature_size * 8, 128)
+            self.confs_layer = nn.Linear(dec_length, 128)
+            self.select_layer = nn.Linear(256 * ocr_source, ocr_source)
+        elif self.mode == 2:
+            self.mmt_layer = nn.Linear(mmt_length * feature_size, 8)
+            self.confs_layer = nn.Linear(dec_length, 8)
+            self.select_layer = nn.Linear(16 * ocr_source, ocr_source)
+        elif self.mode == 3:
+            self.mmt_layer = nn.Linear(mmt_length * feature_size, 8)
+            self.confs_layer = nn.Linear(dec_length, 8)
+            self.score_layer = nn.Linear(16, 1)
+        elif self.mode == 4:
+            self.mmt_layer_1 = nn.Linear(mmt_length, 8)
+            self.mmt_layer_2 = nn.Linear(feature_size * 8, 128)
+            self.confs_layer = nn.Linear(dec_length, 128)
+            self.score_layer = nn.Linear(256, 1)
+        elif self.mode == 5:
+            self.confs_layer_1 = nn.Linear(dec_length, 30)
+            self.confs_layer_2 = nn.Linear(30, 30)
+            self.score_layer = nn.Linear(30, 1)
+
+    def forward(self, mmt_outputs, confs_outputs):
+        ocr_num = len(mmt_outputs)
+        batch_size = mmt_outputs[0].size(0)
+        if self.mode == 1:
+            feat = []
+            for i in range(ocr_num):
+                mmt = mmt_outputs[i].detach()
+                confs = confs_outputs[i].detach()
+                mmt_feat = F.leaky_relu(self.mmt_layer_1(mmt)).view(batch_size, -1)
+                mmt_feat = F.leaky_relu(self.mmt_layer_2(mmt_feat))
+                confs_feat = F.leaky_relu(self.confs_layer(confs))
+                feat.append(torch.cat([mmt_feat, confs_feat], -1))
+            feat = torch.cat(feat, -1)
+            return self.select_layer(feat)
+        elif self.mode == 2:
+            feat = []
+            for i in range(ocr_num):
+                mmt = mmt_outputs[i].detach().reshape(batch_size, -1)
+                confs = confs_outputs[i].detach()
+                mmt_feat = F.leaky_relu(self.mmt_layer(mmt))
+                confs_feat = F.leaky_relu(self.confs_layer(confs))
+                feat.append(torch.cat([mmt_feat, confs_feat], -1))
+            feat = torch.cat(feat, -1)
+            return self.select_layer(feat)
+        elif self.mode == 3:
+            feat = []
+            for i in range(ocr_num):
+                mmt = mmt_outputs[i].detach().reshape(batch_size, -1)
+                confs = confs_outputs[i].detach()
+                mmt_feat = F.leaky_relu(self.mmt_layer(mmt))
+                confs_feat = F.leaky_relu(self.confs_layer(confs))
+                feat.append(torch.cat([mmt_feat, confs_feat], -1).unsqueeze(1))
+            feat = torch.cat(feat, 1)
+            return self.score_layer(feat).squeeze(-1)
+        elif self.mode == 4:
+            feat = []
+            for i in range(ocr_num):
+                mmt = mmt_outputs[i].detach()
+                confs = confs_outputs[i].detach()
+                mmt_feat = F.leaky_relu(self.mmt_layer_1(mmt)).view(batch_size, -1)
+                mmt_feat = F.leaky_relu(self.mmt_layer_2(mmt_feat))
+                confs_feat = F.leaky_relu(self.confs_layer(confs))
+                feat.append(torch.cat([mmt_feat, confs_feat], -1).unsqueeze(1))
+            feat = torch.cat(feat, 1)
+            return self.score_layer(feat).squeeze(-1)
+        elif self.mode == 5:
+            feat = []
+            for i in range(ocr_num):
+                confs = confs_outputs[i].detach()
+                confs_feat = F.sigmoid(self.confs_layer_1(confs))
+                confs_feat = F.sigmoid(self.confs_layer_2(confs_feat))
+                feat.append(confs_feat.unsqueeze(1))
+            feat = torch.cat(feat, 1)
+            return self.score_layer(feat).squeeze(-1)
 
 
 def _get_mask(nums, max_num):

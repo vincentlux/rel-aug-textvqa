@@ -59,7 +59,6 @@ model_config:
   m4c:
     losses:
       - type: m4c_decoding_bce_with_mask
-      - type: m4c_selector_cross_entropy
     ocr:
       encode_concat: true
       remove_ocr_posemb: false
@@ -70,4 +69,4 @@ model_config:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
       remove_obj_txtemb: false
       normalize_bert: false
-    use_selector: true
+    use_selector: false
