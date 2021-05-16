@@ -559,7 +559,7 @@ class M4CDecodingBCEWithMaskLoss(nn.Module):
 
     def forward(self, sample_list, model_output):
         current_epoch_mode = registry.get("current_epoch_mode")
-        joint_train_mode = registry.get("joint_train_mode")
+        joint_train_mode = registry.get("joint_train_mode", None, no_warning=True)
         if joint_train_mode is not None and current_epoch_mode == joint_train_mode:  # not textvqa
             return 0.0
         scores = model_output["scores"]
@@ -619,7 +619,7 @@ class CrossEntropyLoss(nn.Module):
 
     def forward(self, sample_list, model_output):
         current_epoch_mode = registry.get("current_epoch_mode")
-        joint_train_mode = registry.get("joint_train_mode")
+        joint_train_mode = registry.get("joint_train_mode", None, no_warning=True)
         if joint_train_mode is not None and current_epoch_mode == joint_train_mode:  # not textvqa
             return self.loss_fn(model_output["scores"], sample_list.targets)
         return 0.0

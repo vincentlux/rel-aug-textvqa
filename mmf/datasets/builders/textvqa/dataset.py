@@ -19,7 +19,7 @@ class TextVQADataset(MMFDataset):
         self.use_all_pretrain_data = getattr(self.config, "use_all_pretrain_data", False)
         self.joint_train = registry.get("joint_train")
         self.current_epoch_mode = None
-        self.joint_train_mode = registry.get("joint_train_mode", None)
+        self.joint_train_mode = registry.get("joint_train_mode", None, no_warning=True)
 
         self.pos_emb_calculator = pos_emb_calculator(
             Dim=self.config.get("pos_emb_length",20),

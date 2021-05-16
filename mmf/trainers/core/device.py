@@ -27,6 +27,8 @@ class TrainerDeviceMixin(ABC):
         # Will be updated later based on distributed setup
         registry.register("global_device", self.device)
 
+        self.config.distributed.init_method = None
+
         if self.config.distributed.init_method is not None:
             self.distributed = True
             self.device = torch.device("cuda", self.local_rank)
