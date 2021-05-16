@@ -110,20 +110,23 @@ evaluation:
   - stvqa_accuracy
   - stvqa_anls
 
+checkpoint:
+  max_to_keep: 5
+
 training:
     clip_norm_mode: all
     clip_gradients: true
     max_grad_l2_norm: 0.25
     lr_scheduler: true
     lr_steps:
-    - 14000
-    - 19000
+    - 7000
+    - 12000
     lr_ratio: 0.1
     use_warmup: true
     warmup_factor: 0.2
     warmup_iterations: 1000
-    max_updates: 48000
-    batch_size: 32
+    max_updates: 24000
+    batch_size: 48
     num_workers: 0
     task_size_proportional_sampling: true
     early_stop:

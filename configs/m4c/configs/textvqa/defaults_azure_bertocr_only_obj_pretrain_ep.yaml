@@ -57,7 +57,7 @@ dataset_config:
           max_seq_length: 100
     use_ocr_word_position: true
     pos_emb_length: 20
-    use_all_pretrain_data: true
+    use_all_pretrain_data: false
 
 
 model_config:

@@ -67,7 +67,7 @@ model_config:
       only_pretrain: false
       format: epoch
       train_first: obj_pretrain # obj_pretrain/textvqa (indicate which task to be trained first)
-      stop_pretrain_epoch: 16
+      stop_pretrain_epoch: 100
     ocr:
       encode_concat: true
       remove_ocr_posemb: false
@@ -76,5 +76,5 @@ model_config:
       normalize_bert: false
     obj:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
-      remove_obj_txtemb: true
+      remove_obj_txtemb: false
       normalize_bert: false

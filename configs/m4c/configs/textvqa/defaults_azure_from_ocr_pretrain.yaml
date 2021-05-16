@@ -1,5 +1,5 @@
 includes:
-- ./defaults_azure.yaml
+- ./defaults_azure_bertocr.yaml
 checkpoint:
   resume: true
   resume_best: false
