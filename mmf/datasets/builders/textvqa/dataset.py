@@ -31,6 +31,8 @@ class TextVQADataset(MMFDataset):
         self.tokenizer = AutoTokenizer.from_pretrained(
             'bert-base-uncased', do_lower_case=True
         )
+        print(f'LENGTH of annotation db: {len(self.annotation_db)}')
+        print(f'LENGTH of feature db: {len(self.features_db)}')
 
     
     def preprocess_sample_info(self, sample_info):

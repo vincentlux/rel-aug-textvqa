@@ -2,7 +2,6 @@ includes:
 - ./defaults.yaml
 
 training:
-  seed: 37796327
   max_updates: 48000
   num_workers: 0
   mlflow: true
@@ -69,3 +68,4 @@ model_config:
       mmt_in_dim: 2816  # 768 (TEXT) + 2048 (Faster R-CNN)
       remove_obj_txtemb: false
       normalize_bert: false
+    use_selector: false

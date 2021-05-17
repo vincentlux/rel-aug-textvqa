@@ -79,6 +79,9 @@ class MMFTrainer(
         self.train_loader = self.dataset_loader.train_loader
         self.val_loader = self.dataset_loader.val_loader
         self.test_loader = self.dataset_loader.test_loader
+        print(f"LENGTH of train loader: {len(self.train_loader)}")
+        print(f"LENGTH of val loader: {len(self.val_loader)}")
+        print(f"LENGTH of test loader: {len(self.test_loader)}")
 
     def load_model(self):
         logger.info("Loading model")

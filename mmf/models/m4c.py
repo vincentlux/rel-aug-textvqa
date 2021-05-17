@@ -47,7 +47,8 @@ class M4C(BaseModel):
         #self._build_ocrtxt_encoding()
         self._build_mmt()
         self._build_output()
-        self._build_selector()
+        if self.config.use_selector:
+            self._build_selector()
 
     def _build_encoder_config(self):
         return OmegaConf.create(
