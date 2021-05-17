@@ -168,6 +168,9 @@ def byte_tensor_to_object(byte_tensor, max_size=4094):
 def infer_init_method(config):
     if config.distributed.init_method is not None:
         return
+
+    return None
+
     # support torch.distributed.launch
     if all(
         key in os.environ
