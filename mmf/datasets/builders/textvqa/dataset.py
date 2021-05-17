@@ -683,3 +683,8 @@ class TextVQADataset(MMFDataset):
             raise NotImplementedError
 
         return sample
+
+    def prepare_batch(self, batch):
+        for i in range(batch["ocr_source_num"][0]):
+            batch[f"context_tokens_{i}"] = batch[f"ocr_source_{i}"].context_tokens
+        return super().prepare_batch(batch)

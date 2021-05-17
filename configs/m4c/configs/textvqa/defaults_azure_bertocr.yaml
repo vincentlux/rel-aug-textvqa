@@ -3,14 +3,18 @@ includes:
 
 training:
   seed: 37796327
-  max_updates: 48000
+  max_updates: 24000
   num_workers: 0
   mlflow: true
   batch_size: 32
+  update_frequency: 4
   evaluation_interval: 1000
   lr_steps:
   - 14000
   - 19000
+distributed:
+  world_size: -1
+  no_spawn: true
 
 dataset_config:
   textvqa:

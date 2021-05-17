@@ -318,9 +318,9 @@ class M4C(BaseModel):
                                 )
                             max_conf = torch.where(max_conf > fwd_results["conf"], max_conf, fwd_results["conf"])
 
-            sample_list["mmt_outputs"] = mmt_outputs
-            sample_list["confs_outputs"] = confs_outputs
             if self.config.use_selector:
+                sample_list["mmt_outputs"] = mmt_outputs
+                sample_list["confs_outputs"] = confs_outputs
                 self._forward_selector(sample_list, fwd_results)
             #print(torch.argmax(fwd_results["selector_score"], -1))
 
@@ -336,8 +336,6 @@ class M4C(BaseModel):
                 if not is_test:
                     sample_list.targets = updated_target
                     sample_list.train_loss_mask = updated_loss_mask
-                for i in range(sample_list["ocr_source_num"][0]):
-                    sample_list[f"context_tokens_{i}"] = sample_list[f"ocr_source_{i}"].context_tokens
                 if self.config.use_selector:
                     pred_source_by_selector = torch.argmax(fwd_results["selector_score"], -1)
                     scores_by_selector = torch.zeros_like(scores)
@@ -348,11 +346,13 @@ class M4C(BaseModel):
                                "selector_scores": fwd_results["selector_score"]}
                 else:
                     results = {"scores": scores, "source": pred_source}
+
             else:
                 if self.config.use_selector:
                     results = {"scores": scores, "selector_scores": fwd_results["selector_score"]}
                 else:
                     results = {"scores": scores}
+            # print(sample_list.keys())
             return results
 
     def _forward_txt_encoding(self, sample_list, fwd_results):
@@ -1149,8 +1149,8 @@ class OcrSelector(nn.Module):
             feat = []
             for i in range(ocr_num):
                 confs = confs_outputs[i].detach()
-                confs_feat = F.sigmoid(self.confs_layer_1(confs))
-                confs_feat = F.sigmoid(self.confs_layer_2(confs_feat))
+                confs_feat = torch.sigmoid(self.confs_layer_1(confs))
+                confs_feat = torch.sigmoid(self.confs_layer_2(confs_feat))
                 feat.append(confs_feat.unsqueeze(1))
             feat = torch.cat(feat, 1)
             return self.score_layer(feat).squeeze(-1)

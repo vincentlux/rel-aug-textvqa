@@ -196,6 +196,10 @@ class TrainerTrainingLoopMixin(ABC):
         return report
 
     def _forward(self, batch: Tensor) -> Dict[str, Any]:
+
+        #print("in _forward:")
+        #print("batch:\n\t", batch.keys())
+        #print(self.dataset_loader)
         prepared_batch = self.dataset_loader.prepare_batch(batch)
         # Move the sample list to device if it isn't as of now.
         prepared_batch = to_device(prepared_batch, torch.device("cuda"))
@@ -203,7 +207,10 @@ class TrainerTrainingLoopMixin(ABC):
         # Arguments should be a dict at this point
 
         with torch.cuda.amp.autocast(enabled=self.training_config.fp16):
+        #    print("before model:\n\t", prepared_batch.keys())
             model_output = self.model(prepared_batch)
+        #    print("after model:\n\t", prepared_batch.keys())
+        #    print("model_output:\n\t", model_output.keys())
             report = Report(prepared_batch, model_output)
 
         self.profile("Forward time")
