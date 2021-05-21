@@ -5,8 +5,8 @@ training:
   max_updates: 24000
   num_workers: 0
   mlflow: true
-  batch_size: 32
-  update_frequency: 4
+  batch_size: 48
+  update_frequency: 1
   evaluation_interval: 1000
   lr_steps:
   - 14000

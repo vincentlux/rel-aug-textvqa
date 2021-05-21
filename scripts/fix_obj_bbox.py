@@ -66,7 +66,8 @@ if __name__ == "__main__":
     err_npys = [
         # "imdb_train_ocr_azure_HQcluster-unsorted",
         # "imdb_val_ocr_azure_HQcluster-unsorted",
-        "imdb_test_ocr_azure_HQcluster-unsorted",
+        # "imdb_test_ocr_azure_HQcluster-unsorted",
+        "imdb_test_ocr_azure_clus-unsorted"
         ]
     # dir where obj npz files being saved (from bottom_up_attention.pytorch)
     src_dir = f"/home/vincent/proj/hw/11797/data/{dataset}/test_images_frcnn"

@@ -1,10 +1,8 @@
 includes:
-- ./defaults_azure_bertocr_joint_with_stvqa.yaml
+- ./defaults_azure_bertocr_clus_HQ.yaml
 checkpoint:
   resume: true
   resume_best: false
   resume_pretrained: true
   reset:
     all: true
-training:
-  seed: 51041727
